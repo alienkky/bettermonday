@@ -1,10 +1,10 @@
 [phases.setup]
-nixPkgs = ["nodejs_22", "openssl"]
+nixPkgs = ["nodejs_23", "openssl"]
 
 [phases.install]
 cmds = [
-  "cd client && npm ci",
-  "cd server && npm ci",
+  "cd client && npm install --no-audit --no-fund",
+  "cd server && npm install --no-audit --no-fund",
   "cd server && npx prisma generate"
 ]
 
