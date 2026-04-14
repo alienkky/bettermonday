@@ -1,0 +1,300 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// USER / AUTH
+// ─────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  role         UserRole @default(customer)
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+
+  phone  String?
+  region String?
+
+  note                String?
+  forcePasswordChange Boolean   @default(false) @map("force_password_change")
+  loginAttempts       Int       @default(0) @map("login_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+
+  consentTerms     Boolean   @default(false) @map("consent_terms")
+  consentPrivacy   Boolean   @default(false) @map("consent_privacy")
+  consentMarketing Boolean   @default(false) @map("consent_marketing")
+  consentAt        DateTime? @map("consent_at")
+  consentIp        String?   @map("consent_ip")
+
+  emailVerified      Boolean   @default(false) @map("email_verified")
+  emailVerifyToken   String?   @map("email_verify_token")
+  emailVerifyExpires DateTime? @map("email_verify_expires")
+
+  passwordResetToken   String?   @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
+
+  loginCount  Int       @default(0) @map("login_count")
+  lastLoginAt DateTime? @map("last_login_at")
+  isActive    Boolean   @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  spaces        Space[]
+  estimates     Estimate[]
+  consentLogs   ConsentLog[]
+  brandSettings BrandSettings?
+
+  @@map("users")
+}
+
+enum UserRole {
+  master
+  admin
+  customer
+}
+
+model ConsentLog {
+  id          String        @id @default(uuid())
+  userId      String        @map("user_id")
+  action      ConsentAction
+  consentType ConsentType   @map("consent_type")
+  ipAddress   String?       @map("ip_address")
+  userAgent   String?       @map("user_agent")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("consent_logs")
+}
+
+enum ConsentAction {
+  agree
+  withdraw
+}
+
+enum ConsentType {
+  terms
+  privacy
+  marketing
+}
+
+// ─────────────────────────────────────────────
+// SPACE
+// ─────────────────────────────────────────────
+
+model Space {
+  id         String     @id @default(uuid())
+  customerId String     @map("customer_id")
+  name       String
+  address    String?
+  widthM     Float      @map("width_m")
+  depthM     Float      @map("depth_m")
+  heightM    Float      @map("height_m")
+  areaSqm    Float      @map("area_sqm")
+  brand      String     @default("먼데이커피")
+  shape      SpaceShape @default(rectangle)
+  layoutJson Json?      @map("layout_json")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+
+  customer   User        @relation(fields: [customerId], references: [id])
+  placements Placement[]
+  estimates  Estimate[]
+
+  @@map("spaces")
+}
+
+enum SpaceShape {
+  rectangle
+  l_shape
+  custom
+}
+
+// ─────────────────────────────────────────────
+// ITEM CATALOG
+// ─────────────────────────────────────────────
+
+model Category {
+  id    String       @id @default(uuid())
+  name  CategoryName @unique
+  items Item[]
+
+  @@map("categories")
+}
+
+enum CategoryName {
+  painting    // 도장
+  film        // 필름
+  tile        // 타일
+  fabric      // 패브릭
+  lighting    // 조명
+  hardware    // 손잡이
+  stone       // 인조대리석
+  metalwork   // 금속유리
+  plumbing    // 설비/배관
+  woodwork    // 목공자재
+  labor       // 인건비
+}
+
+model Item {
+  id          String   @id @default(uuid())
+  categoryId  String   @map("category_id")
+  name        String
+  brand       String   @default("공통")
+  unit        ItemUnit
+  unitPrice   Float    @map("unit_price")
+  description String?
+  imageUrl    String?  @map("image_url")
+  isoImageUrl String?  @map("iso_image_url")  // isometric 3D preview image
+  width       Float?
+  height      Float?
+  tileSize    Int?     @map("tile_size")   // 300 or 600 (mm) — flooring tile dimension
+  areaBasis   String?  @map("area_basis") // 'floor' or 'wall' — auto-calc quantity basis
+  isRequired  Boolean  @default(false) @map("is_required")
+  version     String   @default("1.0.0")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  category     Category      @relation(fields: [categoryId], references: [id])
+  placements   Placement[]
+  marketPrices MarketPrice[]
+
+  @@map("items")
+}
+
+enum ItemUnit {
+  m2
+  m
+  ea
+  set
+  day    // 인/일
+  box    // 박스
+  unit   // 통, 매
+}
+
+// ─────────────────────────────────────────────
+// PLANNER
+// ─────────────────────────────────────────────
+
+model Placement {
+  id         String   @id @default(uuid())
+  spaceId    String   @map("space_id")
+  itemId     String   @map("item_id")
+  quantity   Float    @default(1)
+  x          Float    @default(0)
+  y          Float    @default(0)
+  rotation   Float    @default(0)
+  zoneId     String?  @map("zone_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  space Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  item  Item  @relation(fields: [itemId], references: [id])
+
+  @@map("placements")
+}
+
+// ─────────────────────────────────────────────
+// ESTIMATE
+// ─────────────────────────────────────────────
+
+model Estimate {
+  id            String         @id @default(uuid())
+  spaceId       String         @map("space_id")
+  customerId    String         @map("customer_id")
+  versionLabel  String         @map("version_label")
+  itemsSnapshot Json           @map("items_snapshot")
+  totalCost     Float          @map("total_cost")
+  totalCostVat  Float          @map("total_cost_vat")
+  status        EstimateStatus @default(draft)
+  adminNote     String?        @map("admin_note")
+  contactName   String?        @map("contact_name")
+  contactPhone  String?        @map("contact_phone")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  space    Space @relation(fields: [spaceId], references: [id])
+  customer User  @relation(fields: [customerId], references: [id])
+
+  @@map("estimates")
+}
+
+enum EstimateStatus {
+  draft
+  submitted
+  approved
+}
+
+// ─────────────────────────────────────────────
+// BRAND SETTINGS (singleton — always id = 'default')
+// ─────────────────────────────────────────────
+
+model BrandSettings {
+  id              String  @id @default(uuid())
+  userId          String? @unique @map("user_id")
+  brandName       String  @default("FranchiseSim") @map("brand_name")
+  logoUrl         String? @map("logo_url")
+  faviconUrl      String? @map("favicon_url")
+  primaryColor    String  @default("#0073ea") @map("primary_color")
+  secondaryColor  String  @default("#00c875") @map("secondary_color")
+  accentColor     String  @default("#7c3aed") @map("accent_color")
+  dangerColor     String  @default("#e2445c") @map("danger_color")
+  headerBg        String  @default("#1a1a1a") @map("header_bg")
+  headerTextColor String  @default("#ffffff") @map("header_text_color")
+  bodyBg          String  @default("#f5f6f8") @map("body_bg")
+  fontFamily      String  @default("Pretendard, sans-serif") @map("font_family")
+  borderRadius    String  @default("12") @map("border_radius")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("brand_settings")
+}
+
+// ─────────────────────────────────────────────
+// MARKET PRICE TRACKING (실시간 자재 단가)
+// ─────────────────────────────────────────────
+
+model MarketPrice {
+  id           String   @id @default(uuid())
+  brand        String   // '먼데이커피', '스토리오브라망', '공통'
+  name         String
+  spec         String?
+  category     String   // '도장','필름','타일','패브릭','조명','손잡이','인조대리석','금속유리','설비','목공자재','인건비'
+  unit         String   // '㎡','m','EA','식','인/일','박스','통','매'
+  minPrice     Float    @map("min_price")
+  maxPrice     Float    @map("max_price")
+  avgPrice     Float    @map("avg_price")
+  changePct    Float    @default(0) @map("change_pct")
+  source       String?
+  priceDate    String   @map("price_date")
+  linkedItemId String?  @map("linked_item_id")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  linkedItem Item? @relation(fields: [linkedItemId], references: [id], onDelete: SetNull)
+
+  @@map("market_prices")
+}
+
+// ─────────────────────────────────────────────
+// VERSION
+// ─────────────────────────────────────────────
+
+model SystemVersion {
+  id         String   @id @default(uuid())
+  version    String   @unique
+  changelog  String?
+  releasedAt DateTime @default(now()) @map("released_at")
+  isCurrent  Boolean  @default(false) @map("is_current")
+
+  @@map("system_versions")
+}
