@@ -18,18 +18,26 @@ async function main() {
     },
   });
 
-  // Master user (최고 관리자)
+  // Master user (최고 관리자) — always ensure correct password and active state
   const masterHash = await bcrypt.hash('master1234!', 12);
   await prisma.user.upsert({
     where: { email: 'master@bettermonday.kr' },
-    update: {},
+    update: {
+      passwordHash: masterHash,
+      role: 'master',
+      isActive: true,
+      loginAttempts: 0,
+      lockedUntil: null,
+    },
     create: {
       role: 'master',
       name: '마스터',
       email: 'master@bettermonday.kr',
       passwordHash: masterHash,
+      isActive: true,
     },
   });
+  console.log('   Master account password ensured');
 
   // Admin user (인테리어 업체)
   const adminHash = await bcrypt.hash('admin1234', 10);
