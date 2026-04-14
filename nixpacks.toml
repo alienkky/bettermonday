@@ -12,4 +12,4 @@ cmds = [
 cmds = ["cd client && npm run build"]
 
 [start]
-cmd = "cd server && npx prisma migrate deploy && npm start"
+cmd = "cd server && npx prisma migrate deploy && (node prisma/seed.js || echo 'Seed skipped') && npm start"

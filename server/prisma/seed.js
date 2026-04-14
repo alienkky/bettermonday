@@ -115,8 +115,15 @@ async function main() {
     { categoryId: categories.labor, name: '설치 관리비', unit: 'set', unitPrice: 500000, description: '현장 감리 및 관리비', isRequired: true, width: null, height: null },
   ];
 
-  for (const item of items) {
-    await prisma.item.create({ data: { ...item, version: '1.0.0' } });
+  // Only create items if none exist (prevents duplicates on re-deploy)
+  const existingItemCount = await prisma.item.count();
+  if (existingItemCount === 0) {
+    for (const item of items) {
+      await prisma.item.create({ data: { ...item, version: '1.0.0' } });
+    }
+    console.log(`   Created ${items.length} items`);
+  } else {
+    console.log(`   Skipped items (${existingItemCount} already exist)`);
   }
 
   console.log('✅ Seed completed!');
