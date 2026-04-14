@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
+const { MC_DATA, LM_DATA, WOOD_DATA, LABOR_DATA, fmtDate } = require('../src/data/marketPrices');
 
 const prisma = new PrismaClient();
 
@@ -137,6 +138,21 @@ async function main() {
     console.log(`   Created ${items.length} items`);
   } else {
     console.log(`   Skipped items (${existingItemCount} already exist)`);
+  }
+
+  // Market prices (시세 데이터)
+  const existingMarketCount = await prisma.marketPrice.count();
+  if (existingMarketCount === 0) {
+    const priceDate = fmtDate();
+    const marketRows = [];
+    MC_DATA.forEach(d => marketRows.push({ ...d, brand: '먼데이커피', avgPrice: Math.round((d.minPrice + d.maxPrice) / 2), priceDate }));
+    LM_DATA.forEach(d => marketRows.push({ ...d, brand: '스토리오브라망', avgPrice: Math.round((d.minPrice + d.maxPrice) / 2), priceDate }));
+    WOOD_DATA.forEach(d => marketRows.push({ ...d, brand: '공통', avgPrice: Math.round((d.minPrice + d.maxPrice) / 2), priceDate }));
+    LABOR_DATA.forEach(d => marketRows.push({ ...d, brand: '공통', avgPrice: Math.round((d.minPrice + d.maxPrice) / 2), priceDate }));
+    await prisma.marketPrice.createMany({ data: marketRows });
+    console.log(`   Created ${marketRows.length} market prices`);
+  } else {
+    console.log(`   Skipped market prices (${existingMarketCount} already exist)`);
   }
 
   console.log('✅ Seed completed!');
