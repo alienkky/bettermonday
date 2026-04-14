@@ -2,14 +2,12 @@
   "name": "franchisesim",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
-    "install:all": "cd client && npm install && cd ../server && npm install",
-    "build": "cd client && npm run build",
-    "start": "cd server && npm start",
+    "start": "cd server && npx prisma migrate deploy && npm start",
     "dev": "cd server && npm run dev",
-    "db:migrate": "cd server && npx prisma migrate deploy",
-    "db:generate": "cd server && npx prisma generate",
-    "db:seed": "cd server && node prisma/seed.js",
-    "postinstall": "npm run install:all && npm run db:generate && npm run build"
+    "build": "cd client && npm run build"
   }
 }
