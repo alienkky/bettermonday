@@ -17,7 +17,20 @@ async function main() {
     },
   });
 
-  // Admin user
+  // Master user (최고 관리자)
+  const masterHash = await bcrypt.hash('master1234!', 12);
+  await prisma.user.upsert({
+    where: { email: 'master@bettermonday.kr' },
+    update: {},
+    create: {
+      role: 'master',
+      name: '마스터',
+      email: 'master@bettermonday.kr',
+      passwordHash: masterHash,
+    },
+  });
+
+  // Admin user (인테리어 업체)
   const adminHash = await bcrypt.hash('admin1234', 10);
   await prisma.user.upsert({
     where: { email: 'admin@franchisesim.com' },
@@ -127,7 +140,8 @@ async function main() {
   }
 
   console.log('✅ Seed completed!');
-  console.log('   Admin: admin@franchisesim.com / admin1234');
+  console.log('   Master: master@bettermonday.kr / master1234!');
+  console.log('   Admin:  admin@franchisesim.com / admin1234');
   console.log('   Customer: demo@example.com / customer1234');
 }
 
