@@ -63,7 +63,8 @@ app.get('/api/health', (req, res) => {
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   app.use(express.static(clientDist));
-  app.get('*', (req, res) => {
+  // Express 5: use /{*splat} instead of '*' for catch-all SPA routing
+  app.get(/^\/(?!api|uploads).*/, (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
