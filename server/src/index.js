@@ -20,6 +20,9 @@ const marketPriceRoutes = require('./routes/market-prices');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ── Trust proxy (required for Railway/Heroku rate limiting) ───────────
+app.set('trust proxy', 1);
+
 // ── Security headers ──────────────────────────────────────────────────
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }, // allow /uploads images
