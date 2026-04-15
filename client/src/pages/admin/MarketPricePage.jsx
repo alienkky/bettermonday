@@ -37,6 +37,7 @@ export default function MarketPricePage({ readOnly = false }) {
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingSelected, setPendingSelected] = useState(new Set());
   const [importing, setImporting] = useState(false);
+  const [applyingId, setApplyingId] = useState(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -173,6 +174,21 @@ export default function MarketPricePage({ readOnly = false }) {
     const next = new Set(pendingSelected);
     if (next.has(id)) next.delete(id); else next.add(id);
     setPendingSelected(next);
+  };
+
+  const handleApplyToItem = async (mp) => {
+    const label = mp.linkedItem
+      ? `"${mp.name}" 시세를 연결된 아이템 "${mp.linkedItem.name}" 단가(${mp.avgPrice.toLocaleString()}원)에 적용하시겠습니까?`
+      : `"${mp.name}" 시세를 아이템으로 생성/연결하시겠습니까?\n(단가: ${mp.avgPrice.toLocaleString()}원)`;
+    if (!window.confirm(label)) return;
+    setApplyingId(mp.id);
+    try {
+      const res = await marketPricesApi.applyToItem(mp.id, { priceType: 'avg' });
+      toast.success(res.data.message || '적용 완료');
+      loadData();
+      itemsApi.listAll().then(r => setAllItems(r.data)).catch(() => {});
+    } catch (err) { toast.error(err.response?.data?.error || '적용 실패'); }
+    finally { setApplyingId(null); }
   };
 
   const handleImportSelected = async () => {
@@ -313,7 +329,7 @@ export default function MarketPricePage({ readOnly = false }) {
                         <th className="px-3 py-3 text-center">단위</th>
                         <Th label="전월比" k="changePct" onSort={handleSort} center><SortIcon k="changePct" /></Th>
                         <th className="px-3 py-3 text-left">연결 아이템</th>
-                        {!readOnly && <th className="px-3 py-3 text-center w-20"></th>}
+                        {!readOnly && <th className="px-3 py-3 text-right w-40"></th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
@@ -354,7 +370,18 @@ export default function MarketPricePage({ readOnly = false }) {
                           </td>
                           {!readOnly && (
                             <td className="px-3 py-2.5 text-center">
-                              <div className="flex items-center gap-1">
+                              <div className="flex items-center gap-1 justify-end">
+                                {isMaster && (
+                                  <button
+                                    onClick={() => handleApplyToItem(item)}
+                                    disabled={applyingId === item.id}
+                                    title={item.linkedItem ? '연결 아이템 단가에 적용' : '아이템으로 생성/연결'}
+                                    className={`flex items-center gap-0.5 px-2 py-1 rounded text-xs font-medium transition-colors ${item.linkedItem ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-blue-50 text-[#0073ea] hover:bg-blue-100'} disabled:opacity-50`}
+                                  >
+                                    <Zap size={11} />
+                                    {applyingId === item.id ? '적용 중' : item.linkedItem ? '단가 적용' : '아이템 생성'}
+                                  </button>
+                                )}
                                 <button onClick={() => setEditModal(item)} className="text-gray-400 hover:text-[#0073ea] p-1"><Edit2 size={13} /></button>
                                 <button onClick={() => handleDelete(item.id)} className="text-gray-400 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                               </div>

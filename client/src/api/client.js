@@ -132,6 +132,7 @@ export const marketPricesApi = {
   forceSyncAll: (data) => api.post('/market-prices/force-sync-all', data),
   pendingItems: () => api.get('/market-prices/pending-items'),
   importFromItems: (data) => api.post('/market-prices/import-from-items', data),
+  applyToItem: (id, data) => api.post(`/market-prices/${id}/apply-to-item`, data || {}),
   exportExcel: (params) => api.get('/market-prices/export', { params, responseType: 'blob' }),
 };
 

@@ -511,6 +511,91 @@ router.post('/force-sync-all', requireMaster, async (req, res) => {
   }
 });
 
+// POST /api/market-prices/:id/apply-to-item — 개별 시세 → 아이템 적용 (master only)
+// 동작:
+//   - linkedItem 있으면: 해당 아이템 단가 업데이트
+//   - 동일 brand+name 아이템이 있으면: 연결 + 단가 반영
+//   - 없으면: 신규 아이템 등록 + 자동 연결
+// Body (선택): { priceType: 'avg'|'min'|'max' }
+router.post('/:id/apply-to-item', requireMaster, async (req, res) => {
+  try {
+    const { priceType = 'avg' } = req.body || {};
+    const mp = await prisma.marketPrice.findUnique({
+      where: { id: req.params.id },
+      include: { linkedItem: true },
+    });
+    if (!mp) return res.status(404).json({ error: '시세 항목을 찾을 수 없습니다.' });
+
+    const newPrice = priceType === 'min' ? mp.minPrice : priceType === 'max' ? mp.maxPrice : mp.avgPrice;
+
+    // (1) 이미 연결된 아이템 → 단가 업데이트
+    if (mp.linkedItem) {
+      const oldPrice = mp.linkedItem.unitPrice;
+      if (newPrice === oldPrice) {
+        return res.json({ action: 'noop', message: '변경사항 없음 (단가 동일)', item: mp.linkedItem });
+      }
+      const parts = mp.linkedItem.version.split('.').map(Number);
+      parts[2] += 1;
+      const updated = await prisma.item.update({
+        where: { id: mp.linkedItem.id },
+        data: { unitPrice: newPrice, version: parts.join('.') },
+      });
+      return res.json({
+        action: 'updated',
+        message: `아이템 단가 업데이트: ${oldPrice.toLocaleString()}원 → ${newPrice.toLocaleString()}원`,
+        item: updated,
+      });
+    }
+
+    // (2) 매핑 검증
+    const categoryId = await ensureCategoryId(mp.category);
+    const unit = UNIT_MAP[mp.unit];
+    if (!categoryId) return res.status(400).json({ error: `카테고리 매핑 없음: "${mp.category}"` });
+    if (!unit) return res.status(400).json({ error: `단위 매핑 없음: "${mp.unit}"` });
+
+    // (3) 동일 brand+name 기존 아이템 검색
+    let item = await prisma.item.findFirst({
+      where: { brand: mp.brand, name: mp.name, isActive: true },
+    });
+
+    if (item) {
+      if (item.unitPrice !== newPrice) {
+        const parts = item.version.split('.').map(Number);
+        parts[2] += 1;
+        item = await prisma.item.update({
+          where: { id: item.id },
+          data: { unitPrice: newPrice, version: parts.join('.') },
+        });
+      }
+      await prisma.marketPrice.update({ where: { id: mp.id }, data: { linkedItemId: item.id } });
+      return res.json({ action: 'linked', message: `기존 아이템과 연결 완료: ${item.name}`, item });
+    }
+
+    // (4) 신규 아이템 등록
+    const created = await prisma.item.create({
+      data: {
+        categoryId,
+        name: mp.name,
+        brand: mp.brand || '공통',
+        unit,
+        unitPrice: newPrice,
+        description: mp.spec || null,
+        isRequired: false,
+        version: '1.0.0',
+      },
+    });
+    await prisma.marketPrice.update({ where: { id: mp.id }, data: { linkedItemId: created.id } });
+    return res.json({
+      action: 'created',
+      message: `아이템 신규 등록: ${created.name} (${newPrice.toLocaleString()}원)`,
+      item: created,
+    });
+  } catch (err) {
+    console.error('[apply-to-item] error:', err);
+    res.status(500).json({ error: '아이템 적용 실패: ' + (err.message || 'unknown') });
+  }
+});
+
 // GET /api/market-prices/pending-items — 시세에 아직 등록되지 않은 아이템 목록 (master only)
 // 업체가 추가한 아이템을 마스터가 검토할 때 사용
 router.get('/pending-items', requireMaster, async (req, res) => {
