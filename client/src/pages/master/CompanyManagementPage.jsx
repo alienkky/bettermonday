@@ -432,14 +432,26 @@ const BRAND_DEFAULTS = {
   borderRadius: '12',
 };
 
+// 1 MB max — matches server BRAND_UPLOAD_MAX.
+const MAX_BRAND_BYTES = 1024 * 1024;
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
 function BrandModal({ company, onClose, onSaved }) {
   const [form, setForm] = useState({ ...BRAND_DEFAULTS });
-  const [logoFile, setLogoFile] = useState(null);
-  const [faviconFile, setFaviconFile] = useState(null);
-  const [logoPreview, setLogoPreview] = useState(null);
-  const [faviconPreview, setFaviconPreview] = useState(null);
-  const [removeLogo, setRemoveLogo] = useState(false);
-  const [removeFavicon, setRemoveFavicon] = useState(false);
+  // Base64 data URLs — same representation we send to the server. Avoids the
+  // Railway ephemeral-filesystem issue where uploaded files vanished on redeploy.
+  const [logoDataUrl, setLogoDataUrl] = useState(null);
+  const [faviconDataUrl, setFaviconDataUrl] = useState(null);
+  const [logoFileName, setLogoFileName] = useState(null);
+  const [faviconFileName, setFaviconFileName] = useState(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const logoRef = useRef();
@@ -460,41 +472,58 @@ function BrandModal({ company, onClose, onSaved }) {
         fontFamily: b.fontFamily || BRAND_DEFAULTS.fontFamily,
         borderRadius: b.borderRadius || BRAND_DEFAULTS.borderRadius,
       });
-      if (b.logoUrl) setLogoPreview(b.logoUrl);
-      if (b.faviconUrl) setFaviconPreview(b.faviconUrl);
+      if (b.logoUrl) setLogoDataUrl(b.logoUrl);
+      if (b.faviconUrl) setFaviconDataUrl(b.faviconUrl);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [company.id]);
 
   const handleChange = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
-  const handleLogoChange = (e) => {
+  const handleLogoChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setLogoFile(file);
-    setRemoveLogo(false);
-    setLogoPreview(URL.createObjectURL(file));
+    if (file.size > MAX_BRAND_BYTES) {
+      toast.error(`로고 파일은 ${Math.floor(MAX_BRAND_BYTES / 1024)}KB 이하여야 합니다.`);
+      e.target.value = '';
+      return;
+    }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setLogoDataUrl(dataUrl);
+      setLogoFileName(file.name);
+    } catch {
+      toast.error('로고를 읽을 수 없습니다.');
+    }
   };
 
-  const handleFaviconChange = (e) => {
+  const handleFaviconChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setFaviconFile(file);
-    setRemoveFavicon(false);
-    setFaviconPreview(URL.createObjectURL(file));
+    if (file.size > MAX_BRAND_BYTES) {
+      toast.error(`파비콘 파일은 ${Math.floor(MAX_BRAND_BYTES / 1024)}KB 이하여야 합니다.`);
+      e.target.value = '';
+      return;
+    }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setFaviconDataUrl(dataUrl);
+      setFaviconFileName(file.name);
+    } catch {
+      toast.error('파비콘을 읽을 수 없습니다.');
+    }
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => fd.append(k, v));
-      if (logoFile) fd.append('logo', logoFile);
-      if (faviconFile) fd.append('favicon', faviconFile);
-      if (removeLogo) fd.append('removeLogo', 'true');
-      if (removeFavicon) fd.append('removeFavicon', 'true');
-
-      await masterApi.updateCompanyBrand(company.id, fd);
+      // JSON body. Empty string clears the field on the server.
+      const payload = {
+        ...form,
+        logoUrl: logoDataUrl ?? '',
+        faviconUrl: faviconDataUrl ?? '',
+      };
+      await masterApi.updateCompanyBrand(company.id, payload);
       toast.success(`브랜드 설정이 저장되었습니다.`);
       if (onSaved) onSaved();
       else onClose();
@@ -507,12 +536,10 @@ function BrandModal({ company, onClose, onSaved }) {
 
   const handleReset = () => {
     setForm({ ...BRAND_DEFAULTS });
-    setLogoFile(null);
-    setFaviconFile(null);
-    setLogoPreview(null);
-    setFaviconPreview(null);
-    setRemoveLogo(true);
-    setRemoveFavicon(true);
+    setLogoDataUrl(null);
+    setFaviconDataUrl(null);
+    setLogoFileName(null);
+    setFaviconFileName(null);
   };
 
   return (
@@ -555,10 +582,10 @@ function BrandModal({ company, onClose, onSaved }) {
                 {/* Logo */}
                 <div>
                   <label className="text-[11px] text-gray-400 block mb-1">로고</label>
-                  {logoPreview ? (
+                  {logoDataUrl ? (
                     <div className="relative border border-gray-200 rounded-lg p-3 flex items-center justify-center h-20" style={{ background: 'repeating-conic-gradient(#d1d5db 0% 25%, #fff 0% 50%) 0 0 / 16px 16px' }}>
-                      <img src={logoPreview} alt="Logo" className="max-h-14 max-w-full object-contain" />
-                      <button onClick={() => { setLogoFile(null); setLogoPreview(null); setRemoveLogo(true); }}
+                      <img src={logoDataUrl} alt="Logo" className="max-h-14 max-w-full object-contain" />
+                      <button onClick={() => { setLogoDataUrl(null); setLogoFileName(null); }}
                         className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600">
                         <X size={10} />
                       </button>
@@ -575,10 +602,10 @@ function BrandModal({ company, onClose, onSaved }) {
                 {/* Favicon */}
                 <div>
                   <label className="text-[11px] text-gray-400 block mb-1">파비콘</label>
-                  {faviconPreview ? (
+                  {faviconDataUrl ? (
                     <div className="relative border border-gray-200 rounded-lg p-3 flex items-center justify-center h-20" style={{ background: 'repeating-conic-gradient(#d1d5db 0% 25%, #fff 0% 50%) 0 0 / 16px 16px' }}>
-                      <img src={faviconPreview} alt="Favicon" className="max-h-10 max-w-full object-contain" />
-                      <button onClick={() => { setFaviconFile(null); setFaviconPreview(null); setRemoveFavicon(true); }}
+                      <img src={faviconDataUrl} alt="Favicon" className="max-h-10 max-w-full object-contain" />
+                      <button onClick={() => { setFaviconDataUrl(null); setFaviconFileName(null); }}
                         className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600">
                         <X size={10} />
                       </button>
@@ -641,8 +668,8 @@ function BrandModal({ company, onClose, onSaved }) {
               <label className="text-xs font-medium text-gray-500 block mb-2">미리보기</label>
               <div className="rounded-xl border border-gray-200 overflow-hidden" style={{ fontFamily: form.fontFamily }}>
                 <div className="flex items-center gap-2 px-3 py-2" style={{ backgroundColor: form.headerBg }}>
-                  {logoPreview ? (
-                    <img src={logoPreview} alt="logo" className="h-4 object-contain" />
+                  {logoDataUrl ? (
+                    <img src={logoDataUrl} alt="logo" className="h-4 object-contain" />
                   ) : (
                     <div className="w-4 h-4 rounded flex items-center justify-center text-white text-[8px] font-bold"
                       style={{ backgroundColor: form.primaryColor }}>

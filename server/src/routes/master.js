@@ -2,53 +2,13 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { body } = require('express-validator');
 const { PrismaClient } = require('@prisma/client');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { validate } = require('../middleware/validate');
 const { requireMaster } = require('../middleware/auth');
+const { brandUpload, extractBrandData } = require('../utils/brandImage');
 
 const router = express.Router();
 const prisma = new PrismaClient();
 const BCRYPT_ROUNDS = 12;
-
-// Multer for brand logo/favicon uploads
-const brandUploadDir = path.join(__dirname, '..', '..', 'uploads', 'brand');
-if (!fs.existsSync(brandUploadDir)) fs.mkdirSync(brandUploadDir, { recursive: true });
-const brandStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, brandUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const prefix = file.fieldname === 'logo' ? 'logo' : 'favicon';
-    cb(null, `${prefix}-${Date.now()}${ext}`);
-  },
-});
-const brandUpload = multer({
-  storage: brandStorage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowed = ['.png', '.jpg', '.jpeg', '.svg', '.webp', '.ico', '.gif'];
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, allowed.includes(ext));
-  },
-});
-
-function extractBrandData(req) {
-  const data = {};
-  const fields = [
-    'brandName', 'primaryColor', 'secondaryColor', 'accentColor',
-    'dangerColor', 'headerBg', 'headerTextColor', 'bodyBg',
-    'fontFamily', 'borderRadius',
-  ];
-  for (const f of fields) {
-    if (req.body[f] !== undefined && req.body[f] !== '') data[f] = req.body[f];
-  }
-  if (req.files?.logo?.[0]) data.logoUrl = `/uploads/brand/${req.files.logo[0].filename}`;
-  if (req.files?.favicon?.[0]) data.faviconUrl = `/uploads/brand/${req.files.favicon[0].filename}`;
-  if (req.body.removeLogo === 'true') data.logoUrl = null;
-  if (req.body.removeFavicon === 'true') data.faviconUrl = null;
-  return data;
-}
 
 // All routes require master authentication
 router.use(requireMaster);

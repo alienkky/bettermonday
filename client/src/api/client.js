@@ -150,12 +150,14 @@ export const marketPricesApi = {
   exportExcel: (params) => api.get('/market-prices/export', { params, responseType: 'blob' }),
 };
 
-// Brand Settings
+// Brand Settings — JSON body with base64 data URLs in `logoUrl` / `faviconUrl`
+// (legacy FormData is still accepted by the server)
 export const brandApi = {
   get: () => api.get('/admin/brand'),
-  update: (formData) => api.patch('/admin/brand', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }),
+  update: (payload) =>
+    payload instanceof FormData
+      ? api.patch('/admin/brand', payload, { headers: { 'Content-Type': 'multipart/form-data' } })
+      : api.patch('/admin/brand', payload),
 };
 
 // Master
@@ -172,9 +174,10 @@ export const masterApi = {
   updateEstimate: (id, data) => api.patch(`/master/estimates/${id}`, data),
   // Customers
   customers: (params) => api.get('/master/customers', { params }),
-  // Company Brand
+  // Company Brand — JSON body preferred (logoUrl/faviconUrl as data URLs)
   getCompanyBrand: (id) => api.get(`/master/companies/${id}/brand`),
-  updateCompanyBrand: (id, formData) => api.patch(`/master/companies/${id}/brand`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }),
+  updateCompanyBrand: (id, payload) =>
+    payload instanceof FormData
+      ? api.patch(`/master/companies/${id}/brand`, payload, { headers: { 'Content-Type': 'multipart/form-data' } })
+      : api.patch(`/master/companies/${id}/brand`, payload),
 };

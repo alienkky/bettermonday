@@ -18,14 +18,30 @@ const DEFAULTS = {
   borderRadius: '12',
 };
 
+// Max 1 MB per image — matches server BRAND_UPLOAD_MAX. Larger files get
+// rejected before we even encode them, avoiding wasted CPU and oversized DB
+// rows.
+const MAX_BRAND_BYTES = 1024 * 1024;
+
+// Read a File as a base64 data URL.
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
 export default function BrandSettingsPage() {
   const [form, setForm] = useState({ ...DEFAULTS });
-  const [logoFile, setLogoFile] = useState(null);
-  const [faviconFile, setFaviconFile] = useState(null);
-  const [logoPreview, setLogoPreview] = useState(null);
-  const [faviconPreview, setFaviconPreview] = useState(null);
-  const [removeLogo, setRemoveLogo] = useState(false);
-  const [removeFavicon, setRemoveFavicon] = useState(false);
+  // Logos are stored directly in the form state as base64 data URLs. This
+  // matches the on-wire representation, so no separate "file" + "preview"
+  // bookkeeping is needed and the preview survives navigation.
+  const [logoDataUrl, setLogoDataUrl] = useState(null);
+  const [faviconDataUrl, setFaviconDataUrl] = useState(null);
+  const [logoFileName, setLogoFileName] = useState(null);
+  const [faviconFileName, setFaviconFileName] = useState(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const logoRef = useRef();
@@ -47,8 +63,8 @@ export default function BrandSettingsPage() {
         fontFamily: b.fontFamily || DEFAULTS.fontFamily,
         borderRadius: b.borderRadius || DEFAULTS.borderRadius,
       });
-      if (b.logoUrl) setLogoPreview(b.logoUrl);
-      if (b.faviconUrl) setFaviconPreview(b.faviconUrl);
+      if (b.logoUrl) setLogoDataUrl(b.logoUrl);
+      if (b.faviconUrl) setFaviconDataUrl(b.faviconUrl);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
@@ -57,63 +73,66 @@ export default function BrandSettingsPage() {
     setForm(f => ({ ...f, [key]: value }));
   };
 
-  const handleLogoChange = (e) => {
+  const handleLogoChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setLogoFile(file);
-    setRemoveLogo(false);
-    setLogoPreview(URL.createObjectURL(file));
+    if (file.size > MAX_BRAND_BYTES) {
+      toast.error(`로고 파일은 ${Math.floor(MAX_BRAND_BYTES / 1024)}KB 이하여야 합니다.`);
+      e.target.value = '';
+      return;
+    }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setLogoDataUrl(dataUrl);
+      setLogoFileName(file.name);
+    } catch {
+      toast.error('로고를 읽을 수 없습니다.');
+    }
   };
 
-  const handleFaviconChange = (e) => {
+  const handleFaviconChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setFaviconFile(file);
-    setRemoveFavicon(false);
-    setFaviconPreview(URL.createObjectURL(file));
+    if (file.size > MAX_BRAND_BYTES) {
+      toast.error(`파비콘 파일은 ${Math.floor(MAX_BRAND_BYTES / 1024)}KB 이하여야 합니다.`);
+      e.target.value = '';
+      return;
+    }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setFaviconDataUrl(dataUrl);
+      setFaviconFileName(file.name);
+    } catch {
+      toast.error('파비콘을 읽을 수 없습니다.');
+    }
   };
 
   const handleRemoveLogo = () => {
-    setLogoFile(null);
-    setLogoPreview(null);
-    setRemoveLogo(true);
+    setLogoDataUrl(null);
+    setLogoFileName(null);
   };
 
   const handleRemoveFavicon = () => {
-    setFaviconFile(null);
-    setFaviconPreview(null);
-    setRemoveFavicon(true);
+    setFaviconDataUrl(null);
+    setFaviconFileName(null);
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => fd.append(k, v));
-      if (logoFile) fd.append('logo', logoFile);
-      if (faviconFile) fd.append('favicon', faviconFile);
-      if (removeLogo) fd.append('removeLogo', 'true');
-      if (removeFavicon) fd.append('removeFavicon', 'true');
-
-      const res = await brandApi.update(fd);
+      // JSON body; server accepts data URLs in logoUrl/faviconUrl.
+      // `null` explicitly clears the field (server treats it as a removal).
+      const payload = {
+        ...form,
+        logoUrl: logoDataUrl ?? '',
+        faviconUrl: faviconDataUrl ?? '',
+      };
+      const res = await brandApi.update(payload);
       setBrand(res.data);
-      // Update previews from server URLs so they persist after ObjectURL is revoked
-      if (res.data.logoUrl) {
-        setLogoPreview(res.data.logoUrl);
-        setLogoFile(null);
-      } else {
-        setLogoPreview(null);
-        setLogoFile(null);
-      }
-      if (res.data.faviconUrl) {
-        setFaviconPreview(res.data.faviconUrl);
-        setFaviconFile(null);
-      } else {
-        setFaviconPreview(null);
-        setFaviconFile(null);
-      }
-      setRemoveLogo(false);
-      setRemoveFavicon(false);
+      setLogoDataUrl(res.data.logoUrl || null);
+      setFaviconDataUrl(res.data.faviconUrl || null);
+      setLogoFileName(null);
+      setFaviconFileName(null);
       toast.success('브랜드 설정이 저장되었습니다.');
     } catch (err) {
       toast.error('저장 실패: ' + (err.response?.data?.error || err.message));
@@ -124,12 +143,10 @@ export default function BrandSettingsPage() {
 
   const handleReset = () => {
     setForm({ ...DEFAULTS });
-    setLogoFile(null);
-    setFaviconFile(null);
-    setLogoPreview(null);
-    setFaviconPreview(null);
-    setRemoveLogo(true);
-    setRemoveFavicon(true);
+    setLogoDataUrl(null);
+    setFaviconDataUrl(null);
+    setLogoFileName(null);
+    setFaviconFileName(null);
   };
 
   if (loading) {
@@ -184,16 +201,16 @@ export default function BrandSettingsPage() {
                 {/* Logo */}
                 <div>
                   <label className="text-xs font-medium text-gray-500 block mb-2">로고</label>
-                  {logoPreview ? (
+                  {logoDataUrl ? (
                     <div>
                       <div className="relative border border-gray-200 rounded-lg p-3 flex items-center justify-center h-24" style={{ background: 'repeating-conic-gradient(#d1d5db 0% 25%, #fff 0% 50%) 0 0 / 16px 16px' }}>
-                        <img src={logoPreview} alt="Logo" className="max-h-16 max-w-full object-contain" />
+                        <img src={logoDataUrl} alt="Logo" className="max-h-16 max-w-full object-contain" />
                         <button onClick={handleRemoveLogo}
                           className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600">
                           <X size={10} />
                         </button>
                       </div>
-                      {logoFile && <p className="text-xs text-gray-500 mt-1 truncate">{logoFile.name}</p>}
+                      {logoFileName && <p className="text-xs text-gray-500 mt-1 truncate">{logoFileName}</p>}
                       <button onClick={() => logoRef.current?.click()} className="text-xs text-blue-500 hover:underline mt-1">이미지 변경</button>
                     </div>
                   ) : (
@@ -208,9 +225,9 @@ export default function BrandSettingsPage() {
                 {/* Favicon */}
                 <div>
                   <label className="text-xs font-medium text-gray-500 block mb-2">파비콘</label>
-                  {faviconPreview ? (
+                  {faviconDataUrl ? (
                     <div className="relative border border-gray-200 rounded-lg p-3 flex items-center justify-center h-24" style={{ background: 'repeating-conic-gradient(#d1d5db 0% 25%, #fff 0% 50%) 0 0 / 16px 16px' }}>
-                      <img src={faviconPreview} alt="Favicon" className="max-h-12 max-w-full object-contain" />
+                      <img src={faviconDataUrl} alt="Favicon" className="max-h-12 max-w-full object-contain" />
                       <button onClick={handleRemoveFavicon}
                         className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600">
                         <X size={10} />
@@ -274,7 +291,7 @@ export default function BrandSettingsPage() {
               <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-3">
                 <Eye size={14} /> 실시간 미리보기
               </div>
-              <PreviewCard form={form} logoPreview={logoPreview} />
+              <PreviewCard form={form} logoPreview={logoDataUrl} />
             </div>
           </div>
         </div>
