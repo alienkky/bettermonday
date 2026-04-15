@@ -1,13 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { itemsApi, categoriesApi } from '../../api/client';
 import Layout from '../../components/Layout';
 import toast from 'react-hot-toast';
 import { Plus, Edit2, ToggleLeft, ToggleRight, Upload, Trash2, Power, PowerOff, DollarSign, X, Download, FileSpreadsheet, FolderOpen } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import CategoryManagerModal from '../../components/CategoryManagerModal';
-
-const UNIT_LABELS = { m2: 'm²', m: 'm', ea: '개', set: '세트', day: '인/일', box: '박스', unit: '매' };
-const catLabel = (c) => c?.label || c?.displayName || c?.name || '';
+import ItemModal, { UNIT_LABELS, catLabel } from '../../components/ItemModal';
 
 export default function ItemsPage() {
   const { user } = useAuthStore();
@@ -17,7 +15,7 @@ export default function ItemsPage() {
   const [catManagerOpen, setCatManagerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
-  const [filter, setFilter] = useState({ category: '', active: 'true' });
+  const [filter, setFilter] = useState({ category: '', brand: '', active: 'true' });
   const [selected, setSelected] = useState(new Set());
   const [bulkPrice, setBulkPrice] = useState(null); // null = hidden, '' = shown
   const [importModal, setImportModal] = useState(false);
@@ -49,8 +47,16 @@ export default function ItemsPage() {
     }
   };
 
+  // 현재 로드된 아이템들로부터 실제 존재하는 브랜드 목록을 추출.
+  // (별도의 endpoint를 두지 않고 동적으로 반영되도록 함)
+  const brandOptions = useMemo(() => {
+    const set = new Set(items.map((i) => i.brand).filter(Boolean));
+    return [...set].sort((a, b) => (a === '공통' ? -1 : b === '공통' ? 1 : a.localeCompare(b, 'ko')));
+  }, [items]);
+
   const filtered = items.filter((item) => {
     if (filter.category && item.category?.name !== filter.category) return false;
+    if (filter.brand && (item.brand || '공통') !== filter.brand) return false;
     if (filter.active !== '' && String(item.isActive) !== filter.active) return false;
     return true;
   });
@@ -191,6 +197,14 @@ export default function ItemsPage() {
             {categories.map((c) => <option key={c.id} value={c.name}>{catLabel(c)}</option>)}
           </select>
           <select
+            value={filter.brand}
+            onChange={(e) => setFilter((f) => ({ ...f, brand: e.target.value }))}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0073ea]/20"
+          >
+            <option value="">전체 브랜드</option>
+            {brandOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <select
             value={filter.active}
             onChange={(e) => setFilter((f) => ({ ...f, active: e.target.value }))}
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0073ea]/20"
@@ -199,6 +213,15 @@ export default function ItemsPage() {
             <option value="true">활성</option>
             <option value="false">비활성</option>
           </select>
+          {(filter.category || filter.brand || filter.active !== 'true') && (
+            <button
+              onClick={() => setFilter({ category: '', brand: '', active: 'true' })}
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-[#0073ea] px-2 py-1"
+            >
+              <X size={12} /> 초기화
+            </button>
+          )}
+          <span className="ml-auto text-sm text-gray-400 self-center">총 {filtered.length}개</span>
         </div>
 
         {/* Bulk action bar */}
@@ -340,185 +363,6 @@ export default function ItemsPage() {
         />
       )}
     </Layout>
-  );
-}
-
-function ItemModal({ item, categories, isMaster, onOpenCategoryManager, onClose, onSaved }) {
-  const [form, setForm] = useState({
-    categoryId: item?.categoryId || '',
-    name: item?.name || '',
-    brand: item?.brand || '공통',
-    unit: item?.unit || 'm2',
-    unitPrice: item?.unitPrice || '',
-    description: item?.description || '',
-    isRequired: item?.isRequired || false,
-    width: item?.width || '',
-    height: item?.height || '',
-    tileSize: item?.tileSize || '',
-    areaBasis: item?.areaBasis || '',
-  });
-  const [file, setFile] = useState(null);
-  const [isoFile, setIsoFile] = useState(null);
-  const [saving, setSaving] = useState(false);
-
-  // Determine if selected category is flooring
-  const selectedCat = categories.find(c => c.id === form.categoryId);
-  const isFlooring = selectedCat?.name === 'tile';
-
-  const handleChange = (e) => {
-    const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-    setForm((f) => ({ ...f, [e.target.name]: val }));
-  };
-
-  const handleTileSizeChange = (e) => {
-    const ts = e.target.value;
-    const sizeM = ts ? parseInt(ts) / 1000 : '';  // mm → m
-    setForm((f) => ({ ...f, tileSize: ts, width: sizeM, height: sizeM }));
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!form.categoryId || !form.name || !form.unitPrice) return toast.error('필수 항목을 입력하세요.');
-    setSaving(true);
-    try {
-      const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => fd.append(k, v));
-      if (file) fd.append('image', file);
-      if (isoFile) fd.append('isoImage', isoFile);
-
-      if (item) {
-        await itemsApi.update(item.id, fd);
-        toast.success('수정되었습니다.');
-      } else {
-        await itemsApi.create(fd);
-        toast.success('아이템이 추가되었습니다.');
-      }
-      onSaved();
-    } catch (err) {
-      toast.error(err.response?.data?.error || '저장 실패');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-        <h2 className="font-semibold text-[#1a1a1a] mb-4">{item ? '아이템 수정' : '새 아이템 추가'}</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium text-gray-700">카테고리 *</label>
-              {isMaster && onOpenCategoryManager && (
-                <button type="button" onClick={onOpenCategoryManager} className="text-xs text-[#0073ea] hover:underline flex items-center gap-0.5">
-                  <Plus size={10} /> 카테고리 추가/관리
-                </button>
-              )}
-            </div>
-            <select name="categoryId" value={form.categoryId} onChange={handleChange} className={inputCls}>
-              <option value="">선택하세요</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{catLabel(c)}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <MF label="아이템 이름 *">
-              <input name="name" value={form.name} onChange={handleChange} className={inputCls} />
-            </MF>
-            <MF label="브랜드">
-              <select name="brand" value={form.brand} onChange={handleChange} className={inputCls}>
-                <option value="공통">공통</option>
-                <option value="먼데이커피">먼데이커피</option>
-                <option value="스토리오브라망">스토리오브라망</option>
-              </select>
-            </MF>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <MF label="단위 *">
-              <select name="unit" value={form.unit} onChange={handleChange} className={inputCls}>
-                <option value="m2">m² (면적)</option>
-                <option value="m">m (길이)</option>
-                <option value="ea">개 (수량)</option>
-                <option value="set">세트/식</option>
-                <option value="day">인/일</option>
-                <option value="box">박스</option>
-                <option value="unit">매/통</option>
-              </select>
-            </MF>
-            <MF label="단가 (원) *">
-              <input name="unitPrice" type="number" min="0" value={form.unitPrice} onChange={handleChange} className={inputCls} />
-            </MF>
-          </div>
-          {form.unit === 'm2' && (
-            <MF label="면적 자동계산 기준">
-              <select name="areaBasis" value={form.areaBasis} onChange={handleChange} className={inputCls}>
-                <option value="">수동 입력</option>
-                <option value="floor">바닥 면적 (가로×세로)</option>
-                <option value="wall">벽 면적 (둘레×높이)</option>
-              </select>
-            </MF>
-          )}
-          <MF label="설명">
-            <textarea name="description" value={form.description} onChange={handleChange} rows={2} className={inputCls} />
-          </MF>
-          {isFlooring && (
-            <MF label="타일 크기">
-              <select name="tileSize" value={form.tileSize} onChange={handleTileSizeChange} className={inputCls}>
-                <option value="">선택 안 함</option>
-                <option value="300">300×300 mm</option>
-                <option value="600">600×600 mm</option>
-              </select>
-            </MF>
-          )}
-          <div className="grid grid-cols-2 gap-4">
-            <MF label="가로 크기 (m, 선택)">
-              <input name="width" type="number" step="0.1" value={form.width} onChange={handleChange} className={inputCls} placeholder="0.8" disabled={isFlooring && !!form.tileSize} />
-            </MF>
-            <MF label="세로 크기 (m, 선택)">
-              <input name="height" type="number" step="0.1" value={form.height} onChange={handleChange} className={inputCls} placeholder="0.6" disabled={isFlooring && !!form.tileSize} />
-            </MF>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <MF label="평면도 이미지">
-              <label className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-4 py-3 cursor-pointer hover:bg-gray-50 text-sm text-gray-500">
-                <Upload size={15} />
-                <span className="truncate">{file ? file.name : (item?.imageUrl ? '변경하기' : '2D 이미지')}</span>
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => setFile(e.target.files[0])} />
-              </label>
-              {!file && item?.imageUrl && <img src={item.imageUrl} alt="" className="mt-1 w-10 h-10 rounded object-cover border" />}
-            </MF>
-            <MF label="아이소메트릭 이미지">
-              <label className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-4 py-3 cursor-pointer hover:bg-gray-50 text-sm text-gray-500">
-                <Upload size={15} />
-                <span className="truncate">{isoFile ? isoFile.name : (item?.isoImageUrl ? '변경하기' : '3D 이미지')}</span>
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => setIsoFile(e.target.files[0])} />
-              </label>
-              {!isoFile && item?.isoImageUrl && <img src={item.isoImageUrl} alt="" className="mt-1 w-10 h-10 rounded object-cover border" />}
-            </MF>
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="isRequired" checked={form.isRequired} onChange={handleChange} className="rounded" />
-            <span>필수 항목 (자동 배치, 삭제 불가)</span>
-          </label>
-          <div className="flex gap-2 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 border border-gray-200 text-gray-700 py-2.5 rounded-lg text-sm hover:bg-gray-50">취소</button>
-            <button type="submit" disabled={saving} className="flex-1 bg-[#0073ea] text-white py-2.5 rounded-lg text-sm font-medium hover:bg-[#0060c0] disabled:opacity-50">
-              {saving ? '저장 중...' : '저장'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0073ea]/20 focus:border-[#0073ea]';
-
-function MF({ label, children }) {
-  return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-      {children}
-    </div>
   );
 }
 

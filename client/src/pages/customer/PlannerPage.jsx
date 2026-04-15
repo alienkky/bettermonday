@@ -25,6 +25,24 @@ export default function PlannerPage() {
   const [lastEstimateId, setLastEstimateId] = useState(null);
   const [canvasView, setCanvasView] = useState('floor'); // 'floor' | 'facade'
 
+  // admin/master 만 플래너에서 아이템 CRUD 허용 (itemsApi.create/update/delete는 requireAdmin).
+  const canEditItems = user?.role === 'admin' || user?.role === 'master';
+
+  // 아이템이 추가/수정/삭제되었을 때 카테고리와 items 스토어만 다시 로드 (placements는 유지).
+  const reloadCategories = async () => {
+    try {
+      const spaceBrand = usePlannerStore.getState().space?.brand;
+      const catsRes = await categoriesApi.list(spaceBrand ? { brand: spaceBrand } : {});
+      setCategories(catsRes.data);
+      const allItems = catsRes.data.flatMap((c) =>
+        c.items.map((item) => ({ ...item, category: { id: c.id, name: c.name } }))
+      );
+      setItems(allItems);
+    } catch {
+      toast.error('아이템 목록 새로고침 실패');
+    }
+  };
+
   useEffect(() => {
     loadAll();
   }, [id]);
@@ -349,7 +367,12 @@ export default function PlannerPage() {
 
         {/* Main 3-panel layout */}
         <div className="flex flex-1 overflow-hidden">
-          <ItemPanel categories={categories} />
+          <ItemPanel
+            categories={categories}
+            canEdit={canEditItems}
+            brand={usePlannerStore.getState().space?.brand}
+            onChanged={reloadCategories}
+          />
           <div className="flex-1 flex flex-col p-4 gap-2 overflow-auto">
             <div className="flex items-center gap-3">
               <div className="flex bg-gray-100 p-0.5 rounded-lg">
