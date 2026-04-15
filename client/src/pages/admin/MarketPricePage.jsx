@@ -6,6 +6,7 @@ import {
   TrendingUp, TrendingDown, RefreshCw, Download, Database,
   Search, ArrowUpDown, ArrowUp, ArrowDown, X, Zap, BarChart3, List,
   Plus, Edit2, Trash2, GitCompare, Link2, Unlink, ChevronRight, AlertTriangle,
+  Inbox, CheckSquare, Square,
 } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 
@@ -32,6 +33,10 @@ export default function MarketPricePage({ readOnly = false }) {
   const [editModal, setEditModal] = useState(null);
   const [linkModal, setLinkModal] = useState(null);
   const [allItems, setAllItems] = useState([]);
+  const [pendingItems, setPendingItems] = useState([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingSelected, setPendingSelected] = useState(new Set());
+  const [importing, setImporting] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -148,6 +153,41 @@ export default function MarketPricePage({ readOnly = false }) {
 
   useEffect(() => { if (tab === 'compare') loadCompare(); }, [tab]);
 
+  const loadPending = async () => {
+    setPendingLoading(true);
+    try {
+      const res = await marketPricesApi.pendingItems();
+      setPendingItems(res.data);
+      setPendingSelected(new Set());
+    } catch (err) { toast.error(err.response?.data?.error || '미등록 아이템 로드 실패'); }
+    finally { setPendingLoading(false); }
+  };
+
+  useEffect(() => { if (tab === 'pending' && isMaster) loadPending(); }, [tab, isMaster]);
+
+  const togglePendingAll = () => {
+    if (pendingSelected.size === pendingItems.length) setPendingSelected(new Set());
+    else setPendingSelected(new Set(pendingItems.map(i => i.id)));
+  };
+  const togglePendingOne = (id) => {
+    const next = new Set(pendingSelected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setPendingSelected(next);
+  };
+
+  const handleImportSelected = async () => {
+    if (pendingSelected.size === 0) { toast.error('가져올 아이템을 선택하세요.'); return; }
+    if (!window.confirm(`선택한 ${pendingSelected.size}개 아이템을 시세 목록으로 가져오시겠습니까?`)) return;
+    setImporting(true);
+    try {
+      const res = await marketPricesApi.importFromItems({ itemIds: Array.from(pendingSelected) });
+      toast.success(res.data.message);
+      loadPending();
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.error || '가져오기 실패'); }
+    finally { setImporting(false); }
+  };
+
   const SortIcon = ({ k }) => {
     if (sortKey !== k) return <ArrowUpDown size={12} className="text-gray-300" />;
     return sortDir === 'asc' ? <ArrowUp size={12} className="text-blue-500" /> : <ArrowDown size={12} className="text-blue-500" />;
@@ -201,6 +241,12 @@ export default function MarketPricePage({ readOnly = false }) {
             <button onClick={() => setTab('compare')} className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === 'compare' ? 'border-[#0073ea] text-[#0073ea]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               <GitCompare size={15} /> 단가 비교 & 반영
               {linkedCount > 0 && <span className="ml-1 text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">{linkedCount}연결</span>}
+            </button>
+          )}
+          {isMaster && !readOnly && (
+            <button onClick={() => setTab('pending')} className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === 'pending' ? 'border-[#0073ea] text-[#0073ea]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              <Inbox size={15} /> 업체 추가 아이템 검토
+              {pendingItems.length > 0 && <span className="ml-1 text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full">{pendingItems.length}</span>}
             </button>
           )}
         </div>
@@ -326,10 +372,21 @@ export default function MarketPricePage({ readOnly = false }) {
               </div>
             )}
           </>
-        ) : (
+        ) : tab === 'compare' ? (
           <CompareTab data={compareData} loading={compareLoading} allItems={allItems}
             onLink={handleLink} onUnlink={handleUnlink}
             onReload={() => { loadCompare(); loadData(); }} />
+        ) : (
+          <PendingItemsTab
+            items={pendingItems}
+            loading={pendingLoading}
+            selected={pendingSelected}
+            onToggleAll={togglePendingAll}
+            onToggleOne={togglePendingOne}
+            onImport={handleImportSelected}
+            onReload={loadPending}
+            importing={importing}
+          />
         )}
       </div>
 
@@ -712,3 +769,95 @@ function MarketPriceModal({ item, onClose, onSaved }) {
 }
 
 const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0073ea]/20 focus:border-[#0073ea]';
+
+// ── Pending Items Tab (업체 추가 아이템 → 시세 역가져오기) ──
+function PendingItemsTab({ items, loading, selected, onToggleAll, onToggleOne, onImport, onReload, importing }) {
+  if (loading) return <div className="text-center py-16 text-gray-400">로딩 중...</div>;
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-orange-50">
+        <div className="flex items-center gap-2 text-sm text-orange-700">
+          <Inbox size={16} />
+          <span className="font-medium">아직 시세에 등록되지 않은 아이템 {items.length}건</span>
+          <span className="text-xs text-orange-500">— 업체가 등록한 아이템을 마스터가 시세 항목으로 가져올 수 있습니다.</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={onReload} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-white">
+            <RefreshCw size={12} /> 새로고침
+          </button>
+          <button
+            onClick={onImport}
+            disabled={selected.size === 0 || importing}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[#0073ea] text-white font-medium hover:bg-[#0060c0] disabled:opacity-50"
+          >
+            <ChevronRight size={12} />
+            {importing ? '가져오는 중...' : `선택 ${selected.size}개 시세로 가져오기`}
+          </button>
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <CheckSquare size={40} className="mx-auto mb-3 text-gray-300" />
+          <p>모든 아이템이 시세에 등록되어 있습니다.</p>
+          <p className="text-xs text-gray-400 mt-1">업체에서 아이템을 새로 추가하면 여기에 표시됩니다.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
+                <th className="px-3 py-3 w-10">
+                  <button onClick={onToggleAll} className="text-gray-400 hover:text-gray-700">
+                    {selected.size === items.length && items.length > 0
+                      ? <CheckSquare size={16} className="text-[#0073ea]" />
+                      : <Square size={16} />}
+                  </button>
+                </th>
+                <th className="px-3 py-3 text-left">브랜드</th>
+                <th className="px-3 py-3 text-left">아이템명</th>
+                <th className="px-3 py-3 text-left">카테고리</th>
+                <th className="px-3 py-3 text-left">단위</th>
+                <th className="px-3 py-3 text-right">단가</th>
+                <th className="px-3 py-3 text-left">설명/규격</th>
+                <th className="px-3 py-3 text-center">등록일</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {items.map(it => {
+                const checked = selected.has(it.id);
+                return (
+                  <tr
+                    key={it.id}
+                    className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${checked ? 'bg-blue-50/60' : ''}`}
+                    onClick={() => onToggleOne(it.id)}
+                  >
+                    <td className="px-3 py-2.5">
+                      {checked
+                        ? <CheckSquare size={16} className="text-[#0073ea]" />
+                        : <Square size={16} className="text-gray-300" />}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-700">{it.brand || '공통'}</td>
+                    <td className="px-3 py-2.5 font-medium text-gray-900">{it.name}</td>
+                    <td className="px-3 py-2.5 text-gray-500 text-xs">{it.category?.name || '-'}</td>
+                    <td className="px-3 py-2.5 text-gray-500 text-xs">{it.unit}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold">
+                      {Number(it.unitPrice).toLocaleString()}<span className="text-xs text-gray-400 ml-0.5">원</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-gray-500 max-w-[280px] truncate" title={it.description}>
+                      {it.description || '-'}
+                    </td>
+                    <td className="px-3 py-2.5 text-center text-xs text-gray-400">
+                      {it.createdAt ? new Date(it.createdAt).toLocaleDateString('ko-KR') : '-'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

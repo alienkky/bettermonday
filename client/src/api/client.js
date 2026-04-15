@@ -130,6 +130,8 @@ export const marketPricesApi = {
   unlink: (id) => api.patch(`/market-prices/${id}/link`, { itemId: null }),
   syncToItems: (data) => api.post('/market-prices/sync-to-items', data),
   forceSyncAll: (data) => api.post('/market-prices/force-sync-all', data),
+  pendingItems: () => api.get('/market-prices/pending-items'),
+  importFromItems: (data) => api.post('/market-prices/import-from-items', data),
   exportExcel: (params) => api.get('/market-prices/export', { params, responseType: 'blob' }),
 };
 

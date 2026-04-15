@@ -117,6 +117,16 @@ const UNIT_MAP = {
   '매': 'unit',
 };
 
+// 역방향 매퍼 — Item(enum) → MarketPrice(Korean string)
+const CATEGORY_KO = {
+  painting: '도장', film: '필름', tile: '타일', fabric: '패브릭',
+  lighting: '조명', hardware: '손잡이', stone: '인조대리석',
+  metalwork: '금속유리', plumbing: '설비', woodwork: '목공자재', labor: '인건비',
+};
+const UNIT_KO = {
+  m2: '㎡', m: 'm', ea: 'EA', set: '식', day: '인/일', box: '박스', unit: '매',
+};
+
 async function ensureCategoryId(koreanCategory) {
   const enumName = CATEGORY_MAP[koreanCategory];
   if (!enumName) return null;
@@ -498,6 +508,98 @@ router.post('/force-sync-all', requireMaster, async (req, res) => {
   } catch (err) {
     console.error('[force-sync-all] error:', err);
     res.status(500).json({ error: '강제 반영 실패: ' + (err.message || 'unknown') });
+  }
+});
+
+// GET /api/market-prices/pending-items — 시세에 아직 등록되지 않은 아이템 목록 (master only)
+// 업체가 추가한 아이템을 마스터가 검토할 때 사용
+router.get('/pending-items', requireMaster, async (req, res) => {
+  try {
+    // MarketPrice.linkedItemId 에 연결되지 않은 모든 활성 아이템 조회
+    const linkedMps = await prisma.marketPrice.findMany({
+      where: { linkedItemId: { not: null }, isActive: true },
+      select: { linkedItemId: true },
+    });
+    const linkedItemIds = linkedMps.map(m => m.linkedItemId);
+
+    const pendingItems = await prisma.item.findMany({
+      where: {
+        isActive: true,
+        id: { notIn: linkedItemIds.length ? linkedItemIds : ['__none__'] },
+      },
+      include: { category: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(pendingItems);
+  } catch (err) {
+    console.error('[pending-items] error:', err);
+    res.status(500).json({ error: '미등록 아이템 조회 실패' });
+  }
+});
+
+// POST /api/market-prices/import-from-items — 아이템 → 시세 역가져오기 (master only)
+// Body: { itemIds: string[], source?: string }
+router.post('/import-from-items', requireMaster, async (req, res) => {
+  try {
+    const { itemIds, source = '업체 등록 아이템' } = req.body;
+    if (!Array.isArray(itemIds) || itemIds.length === 0) {
+      return res.status(400).json({ error: 'itemIds 배열이 필요합니다.' });
+    }
+
+    const items = await prisma.item.findMany({
+      where: { id: { in: itemIds }, isActive: true },
+      include: { category: true },
+    });
+
+    const priceDate = fmtDate();
+    const created = [];
+    const skipped = [];
+
+    for (const it of items) {
+      // 이미 연결된 시세가 있는지 체크
+      const existingLink = await prisma.marketPrice.findFirst({
+        where: { linkedItemId: it.id, isActive: true },
+      });
+      if (existingLink) {
+        skipped.push({ itemId: it.id, name: it.name, reason: '이미 시세에 등록됨' });
+        continue;
+      }
+
+      const categoryKo = CATEGORY_KO[it.category.name] || it.category.name;
+      const unitKo = UNIT_KO[it.unit] || it.unit;
+
+      // 초기 시세: 단가를 min/avg/max 동일값으로 시작 (마스터가 추후 편집)
+      const mp = await prisma.marketPrice.create({
+        data: {
+          brand: it.brand || '공통',
+          name: it.name,
+          spec: it.description || null,
+          category: categoryKo,
+          unit: unitKo,
+          minPrice: it.unitPrice,
+          maxPrice: it.unitPrice,
+          avgPrice: it.unitPrice,
+          changePct: 0,
+          source,
+          priceDate,
+          linkedItemId: it.id,
+          isActive: true,
+        },
+      });
+      created.push({ itemId: it.id, marketPriceId: mp.id, name: it.name });
+    }
+
+    res.json({
+      message: `${created.length}개 아이템을 시세로 가져왔습니다${skipped.length ? ` (${skipped.length}개 건너뜀)` : ''}.`,
+      created: created.length,
+      skipped: skipped.length,
+      createdList: created,
+      skippedList: skipped,
+    });
+  } catch (err) {
+    console.error('[import-from-items] error:', err);
+    res.status(500).json({ error: '아이템 가져오기 실패: ' + (err.message || 'unknown') });
   }
 });
 
