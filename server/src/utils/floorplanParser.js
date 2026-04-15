@@ -629,4 +629,165 @@ function pathToPoints(d) {
   return pts.length >= 3 ? pts : null;
 }
 
-module.exports = { parseDXF, parseSVG };
+/* ═══════════════════════════════════════════════════════
+   DXF  →  SVG preview (for manual trace mode)
+   ═══════════════════════════════════════════════════════ */
+
+/* Expand entities for VISUAL preview — keeps dimensions, text bounds, etc.
+   so the user can see the full drawing. Different from parseDXF's
+   expandEntities which aggressively filters for polygon extraction. */
+function expandForRender(entities, blocks, transform, depth = 0, out = []) {
+  if (depth > 8) return out;
+  const t = transform || { rotation: 0, scaleX: 1, scaleY: 1, tx: 0, ty: 0 };
+  for (const e of entities) {
+    if (!e) continue;
+
+    if (e.type === 'INSERT') {
+      const blockName = e.name || e.blockName;
+      const block = blocks?.[blockName];
+      if (block?.entities?.length) {
+        const inner = insertToTransform(e);
+        const combined = composeTransform(t, inner);
+        expandForRender(block.entities, blocks, combined, depth + 1, out);
+      }
+      continue;
+    }
+
+    if (e.type === 'LINE' && e.vertices?.length === 2) {
+      out.push({
+        type: 'LINE',
+        layer: e.layer || '0',
+        vertices: [applyTransform(e.vertices[0], t), applyTransform(e.vertices[1], t)],
+      });
+      continue;
+    }
+
+    if ((e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') && e.vertices?.length >= 2) {
+      out.push({
+        type: e.type,
+        layer: e.layer || '0',
+        closed: e.shape || e.closed || false,
+        vertices: e.vertices.map(v => applyTransform(v, t)),
+      });
+      continue;
+    }
+
+    if (e.type === 'CIRCLE' && e.center && e.radius) {
+      const c = applyTransform(e.center, t);
+      const r = e.radius * (t.scaleX ?? 1);
+      out.push({ type: 'CIRCLE', layer: e.layer || '0', center: c, radius: r });
+      continue;
+    }
+
+    if (e.type === 'ARC' && e.center && e.radius) {
+      const c = applyTransform(e.center, t);
+      const r = e.radius * (t.scaleX ?? 1);
+      const rotDeg = ((t.rotation || 0) * 180) / Math.PI;
+      out.push({
+        type: 'ARC',
+        layer: e.layer || '0',
+        center: c,
+        radius: r,
+        startAngle: (e.startAngle || 0) + rotDeg,
+        endAngle: (e.endAngle || 0) + rotDeg,
+      });
+      continue;
+    }
+
+    // ignore DIMENSION/MTEXT/TEXT/HATCH etc for cleaner preview
+  }
+  return out;
+}
+
+/* Color palette for layer rendering */
+const LAYER_PALETTE = [
+  '#0073ea', '#e8707f', '#00c875', '#ff9900', '#9a5bff',
+  '#00d2d3', '#795548', '#607d8b', '#c62828', '#283593',
+];
+
+function renderDXFtoSVG(content) {
+  const parser = new DxfParser();
+  const dxf = parser.parseSync(content);
+  if (!dxf?.entities) throw new Error('DXF 파일을 파싱할 수 없습니다.');
+
+  const flat = expandForRender(dxf.entities, dxf.blocks || {});
+  if (flat.length === 0) throw new Error('렌더링할 엔터티가 없습니다.');
+
+  // Collect all vertices to determine unit scale + bbox
+  const allVerts = [];
+  for (const e of flat) {
+    if (e.vertices) allVerts.push(...e.vertices);
+    if (e.center) allVerts.push({ x: e.center.x - e.radius, y: e.center.y });
+    if (e.center) allVerts.push({ x: e.center.x + e.radius, y: e.center.y });
+  }
+  const scale = dxfUnitScale(dxf, allVerts);
+
+  // BBox in world meters
+  const xsM = allVerts.map(v => v.x * scale);
+  const ysM = allVerts.map(v => v.y * scale);
+  const minX = Math.min(...xsM);
+  const maxX = Math.max(...xsM);
+  const minY = Math.min(...ysM);
+  const maxY = Math.max(...ysM);
+  const widthM = maxX - minX;
+  const depthM = maxY - minY;
+  if (widthM < 0.1 || depthM < 0.1) throw new Error('도면 크기가 너무 작습니다.');
+
+  // Transform world DXF coords → SVG coords (origin top-left, Y down)
+  const toSvg = (p) => ({
+    x: p.x * scale - minX,
+    y: maxY - p.y * scale,   // flip Y
+  });
+
+  // Assign colors by layer
+  const layerColors = {};
+  let colorIdx = 0;
+  const colorFor = (layer) => {
+    if (!(layer in layerColors)) {
+      layerColors[layer] = LAYER_PALETTE[colorIdx++ % LAYER_PALETTE.length];
+    }
+    return layerColors[layer];
+  };
+
+  // Line width ~2cm in world units (scaled to 0.02 of a metre)
+  const SW = Math.max(0.01, Math.min(widthM, depthM) * 0.003).toFixed(4);
+
+  const parts = [];
+  for (const e of flat) {
+    const col = colorFor(e.layer);
+    if (e.type === 'LINE') {
+      const a = toSvg(e.vertices[0]);
+      const b = toSvg(e.vertices[1]);
+      parts.push(`<line x1="${a.x.toFixed(3)}" y1="${a.y.toFixed(3)}" x2="${b.x.toFixed(3)}" y2="${b.y.toFixed(3)}" stroke="${col}" stroke-width="${SW}" stroke-linecap="round"/>`);
+    } else if (e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') {
+      const pts = e.vertices.map(v => { const p = toSvg(v); return `${p.x.toFixed(3)},${p.y.toFixed(3)}`; }).join(' ');
+      const tag = e.closed ? 'polygon' : 'polyline';
+      parts.push(`<${tag} points="${pts}" stroke="${col}" stroke-width="${SW}" fill="none" stroke-linejoin="round"/>`);
+    } else if (e.type === 'CIRCLE') {
+      const c = toSvg(e.center);
+      const r = e.radius * scale;
+      parts.push(`<circle cx="${c.x.toFixed(3)}" cy="${c.y.toFixed(3)}" r="${r.toFixed(3)}" stroke="${col}" stroke-width="${SW}" fill="none"/>`);
+    } else if (e.type === 'ARC') {
+      const c = toSvg(e.center);
+      const r = e.radius * scale;
+      // DXF arc goes CCW from startAngle to endAngle; in SVG (Y flipped) it's CW
+      const a0 = (e.startAngle || 0) * Math.PI / 180;
+      const a1 = (e.endAngle || 0) * Math.PI / 180;
+      const p0 = { x: c.x + r * Math.cos(a0), y: c.y - r * Math.sin(a0) };
+      const p1 = { x: c.x + r * Math.cos(a1), y: c.y - r * Math.sin(a1) };
+      let sweep = a1 - a0;
+      while (sweep < 0) sweep += 2 * Math.PI;
+      const largeArc = sweep > Math.PI ? 1 : 0;
+      parts.push(`<path d="M ${p0.x.toFixed(3)} ${p0.y.toFixed(3)} A ${r.toFixed(3)} ${r.toFixed(3)} 0 ${largeArc} 0 ${p1.x.toFixed(3)} ${p1.y.toFixed(3)}" stroke="${col}" stroke-width="${SW}" fill="none"/>`);
+    }
+  }
+
+  return {
+    svgInner: parts.join(''),
+    viewBoxW: parseFloat(widthM.toFixed(3)),
+    viewBoxH: parseFloat(depthM.toFixed(3)),
+    entityCount: flat.length,
+  };
+}
+
+module.exports = { parseDXF, parseSVG, renderDXFtoSVG };

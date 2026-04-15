@@ -2,8 +2,9 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { spacesApi, uploadApi } from '../../api/client';
 import Layout from '../../components/Layout';
+import TraceModal from '../../components/TraceModal';
 import toast from 'react-hot-toast';
-import { MapPin, ArrowRight, Upload, FileText, AlertCircle, X, Maximize2, PenTool, Grid3X3, Coffee, Croissant } from 'lucide-react';
+import { MapPin, ArrowRight, Upload, FileText, AlertCircle, X, Maximize2, PenTool, Grid3X3, Coffee, Croissant, Edit3 } from 'lucide-react';
 
 export default function StartPage() {
   const navigate = useNavigate();
@@ -22,6 +23,10 @@ export default function StartPage() {
   const [inputMethod, setInputMethod] = useState('upload');
   const [manual, setManual] = useState({ widthM: '', depthM: '' });
   const [drawSize, setDrawSize] = useState({ widthM: '', depthM: '' });
+
+  // Manual trace modal
+  const [traceOpen, setTraceOpen] = useState(false);
+  const [tracedManually, setTracedManually] = useState(false);
 
   const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
 
@@ -42,6 +47,7 @@ export default function StartPage() {
       fd.append('file', file);
       const res = await uploadApi.parseFloorplan(fd);
       setParsedPlan(res.data);
+      setTracedManually(false);
       setInputMethod('upload');
     } catch (err) {
       setUploadError(err.response?.data?.error || '파일 파싱 실패');
@@ -49,6 +55,20 @@ export default function StartPage() {
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleTraceComplete = (result) => {
+    // Replace auto-detected polygon with the manually traced one
+    setParsedPlan((prev) => ({
+      ...prev,
+      polygon: result.polygon,
+      widthM: result.widthM,
+      depthM: result.depthM,
+      areaSqm: result.areaSqm,
+    }));
+    setTracedManually(true);
+    setTraceOpen(false);
+    toast.success('직접 그린 외곽선이 적용되었습니다.');
   };
 
   const handleDrop = (e) => {
@@ -256,6 +276,9 @@ export default function StartPage() {
                       <div className="flex items-center gap-2">
                         <FileText size={16} className="text-[#0073ea]" />
                         <span className="text-sm font-medium text-[#1a1a1a]">{fileName}</span>
+                        {tracedManually && (
+                          <span className="text-[10px] bg-[#0073ea] text-white px-2 py-0.5 rounded-full">직접 그림</span>
+                        )}
                       </div>
                       <button type="button" onClick={clearFile}
                         className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
@@ -267,6 +290,23 @@ export default function StartPage() {
                         sub={`${(parsedPlan.areaSqm / 3.305785).toFixed(1)}평`} highlight />
                     </div>
                     <MiniPreview polygon={parsedPlan.polygon} />
+
+                    {/* Manual trace CTA — only if backend returned a preview */}
+                    {parsedPlan.preview && (
+                      <div className="mt-3 pt-3 border-t border-blue-100">
+                        <button
+                          type="button"
+                          onClick={() => setTraceOpen(true)}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-[#0073ea] bg-white hover:bg-blue-50 border border-[#0073ea] rounded-lg transition-colors"
+                        >
+                          <Edit3 size={14} />
+                          {tracedManually ? '외곽선 다시 그리기' : '자동 인식이 부정확하면 직접 그리기'}
+                        </button>
+                        <p className="text-[10px] text-gray-400 text-center mt-1.5">
+                          도면 위에 꼭짓점을 찍어 외곽선을 직접 그립니다
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -348,6 +388,15 @@ export default function StartPage() {
           </button>
         </form>
       </div>
+
+      {/* Manual trace modal */}
+      <TraceModal
+        open={traceOpen}
+        preview={parsedPlan?.preview}
+        fileName={fileName}
+        onComplete={handleTraceComplete}
+        onClose={() => setTraceOpen(false)}
+      />
     </Layout>
   );
 }
