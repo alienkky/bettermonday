@@ -84,6 +84,51 @@ function fmtDate() {
 }
 
 // ─────────────────────────────────────────────
+// MAPPERS — 시세(Market Price) Korean strings → Prisma enums
+// ─────────────────────────────────────────────
+const CATEGORY_MAP = {
+  '도장': 'painting',
+  '필름': 'film',
+  '타일': 'tile',
+  '패브릭': 'fabric',
+  '조명': 'lighting',
+  '손잡이': 'hardware',
+  '인조대리석': 'stone',
+  '금속유리': 'metalwork',
+  '설비': 'plumbing',
+  '설비/배관': 'plumbing',
+  '목공자재': 'woodwork',
+  '인건비': 'labor',
+};
+
+const UNIT_MAP = {
+  '㎡': 'm2',
+  'm2': 'm2',
+  'm': 'm',
+  'EA': 'ea',
+  'ea': 'ea',
+  '식': 'set',
+  'set': 'set',
+  '인/일': 'day',
+  'day': 'day',
+  '박스': 'box',
+  'box': 'box',
+  '통': 'unit',
+  '매': 'unit',
+};
+
+async function ensureCategoryId(koreanCategory) {
+  const enumName = CATEGORY_MAP[koreanCategory];
+  if (!enumName) return null;
+  const cat = await prisma.category.upsert({
+    where: { name: enumName },
+    update: {},
+    create: { name: enumName },
+  });
+  return cat.id;
+}
+
+// ─────────────────────────────────────────────
 // ROUTES
 // ─────────────────────────────────────────────
 
@@ -353,49 +398,106 @@ router.post('/sync-to-items', requireMaster, async (req, res) => {
 });
 
 // POST /api/market-prices/force-sync-all — 강제 일괄 반영 (master only)
-// Syncs ALL linked market prices to items regardless of price difference
+// - 연결된 시세 → 기존 아이템 단가 업데이트
+// - 미연결 시세 → 아이템 자동 등록 + 연결
 router.post('/force-sync-all', requireMaster, async (req, res) => {
   try {
     const { priceType = 'avg' } = req.body;
     const marketPrices = await prisma.marketPrice.findMany({
-      where: { isActive: true, linkedItemId: { not: null } },
+      where: { isActive: true },
       include: { linkedItem: true },
     });
 
-    let synced = 0;
+    let updated = 0;
+    let created = 0;
+    let skipped = 0;
     const results = [];
+    const skippedDetails = [];
+
     for (const mp of marketPrices) {
-      if (!mp.linkedItem) continue;
       const newPrice = priceType === 'min' ? mp.minPrice : priceType === 'max' ? mp.maxPrice : mp.avgPrice;
-      const oldPrice = mp.linkedItem.unitPrice;
-      if (newPrice === oldPrice) continue;
 
-      const parts = mp.linkedItem.version.split('.').map(Number);
-      parts[2] += 1;
+      // (1) 이미 연결된 아이템이 있으면 → 단가 업데이트
+      if (mp.linkedItem) {
+        const oldPrice = mp.linkedItem.unitPrice;
+        if (newPrice === oldPrice) continue;
+        const parts = mp.linkedItem.version.split('.').map(Number);
+        parts[2] += 1;
+        await prisma.item.update({
+          where: { id: mp.linkedItem.id },
+          data: { unitPrice: newPrice, version: parts.join('.') },
+        });
+        results.push({
+          action: 'updated',
+          marketPriceName: mp.name,
+          itemName: mp.linkedItem.name,
+          oldPrice,
+          newPrice,
+          diff: oldPrice ? +(((newPrice - oldPrice) / oldPrice) * 100).toFixed(1) : 0,
+        });
+        updated++;
+        continue;
+      }
 
-      await prisma.item.update({
-        where: { id: mp.linkedItem.id },
-        data: { unitPrice: newPrice, version: parts.join('.') },
+      // (2) 미연결 → 같은 brand+name 아이템을 찾거나 신규 등록
+      const categoryId = await ensureCategoryId(mp.category);
+      const unit = UNIT_MAP[mp.unit];
+      if (!categoryId || !unit) {
+        skipped++;
+        skippedDetails.push({ name: mp.name, reason: !categoryId ? `카테고리 매핑 없음(${mp.category})` : `단위 매핑 없음(${mp.unit})` });
+        continue;
+      }
+
+      // 동일 brand+name 기존 아이템 검색 (있으면 연결만)
+      let item = await prisma.item.findFirst({
+        where: { brand: mp.brand, name: mp.name, isActive: true },
       });
-      results.push({
-        marketPriceName: mp.name,
-        itemName: mp.linkedItem.name,
-        oldPrice,
-        newPrice,
-        diff: +(((newPrice - oldPrice) / oldPrice) * 100).toFixed(1),
-      });
-      synced++;
+
+      if (item) {
+        // 기존 아이템과 연결 + 단가 반영
+        if (item.unitPrice !== newPrice) {
+          const parts = item.version.split('.').map(Number);
+          parts[2] += 1;
+          item = await prisma.item.update({
+            where: { id: item.id },
+            data: { unitPrice: newPrice, version: parts.join('.') },
+          });
+        }
+        await prisma.marketPrice.update({ where: { id: mp.id }, data: { linkedItemId: item.id } });
+        results.push({ action: 'linked', marketPriceName: mp.name, itemName: item.name, oldPrice: item.unitPrice, newPrice });
+        updated++;
+      } else {
+        // 신규 등록
+        const newItem = await prisma.item.create({
+          data: {
+            categoryId,
+            name: mp.name,
+            brand: mp.brand,
+            unit,
+            unitPrice: newPrice,
+            description: mp.spec || null,
+            isRequired: false,
+            version: '1.0.0',
+          },
+        });
+        await prisma.marketPrice.update({ where: { id: mp.id }, data: { linkedItemId: newItem.id } });
+        results.push({ action: 'created', marketPriceName: mp.name, itemName: newItem.name, newPrice });
+        created++;
+      }
     }
 
     res.json({
-      message: `${synced}개 아이템 단가 강제 반영 완료 (총 ${marketPrices.length}개 연결 항목)`,
-      synced,
-      totalLinked: marketPrices.length,
+      message: `강제 반영 완료 — 신규 ${created}개 등록, ${updated}개 업데이트${skipped > 0 ? `, ${skipped}개 건너뜀` : ''} (총 ${marketPrices.length}개 시세)`,
+      created,
+      updated,
+      skipped,
+      total: marketPrices.length,
       results,
+      skippedDetails,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: '강제 반영 실패' });
+    console.error('[force-sync-all] error:', err);
+    res.status(500).json({ error: '강제 반영 실패: ' + (err.message || 'unknown') });
   }
 });
 

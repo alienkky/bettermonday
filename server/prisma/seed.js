@@ -66,20 +66,24 @@ async function main() {
     },
   });
 
-  // Categories
+  // Categories — must match CategoryName enum in schema.prisma
   const categoryNames = [
-    'flooring', 'ceiling', 'wall', 'electrical',
-    'plumbing', 'signage', 'equipment', 'furniture', 'labor',
+    'painting', 'film', 'tile', 'fabric', 'lighting',
+    'hardware', 'stone', 'metalwork', 'plumbing', 'woodwork', 'labor',
   ];
 
   const categories = {};
   for (const name of categoryNames) {
-    const cat = await prisma.category.upsert({
-      where: { name },
-      update: {},
-      create: { name },
-    });
-    categories[name] = cat.id;
+    try {
+      const cat = await prisma.category.upsert({
+        where: { name },
+        update: {},
+        create: { name },
+      });
+      categories[name] = cat.id;
+    } catch (e) {
+      console.warn(`   Skip category ${name}: ${e.message}`);
+    }
   }
 
   // Items seed data
@@ -137,16 +141,10 @@ async function main() {
     { categoryId: categories.labor, name: '설치 관리비', unit: 'set', unitPrice: 500000, description: '현장 감리 및 관리비', isRequired: true, width: null, height: null },
   ];
 
-  // Only create items if none exist (prevents duplicates on re-deploy)
+  // NOTE: 기본 아이템 시드는 비활성화됨 — 현재 스키마(CategoryName enum)와 호환되지 않음.
+  // 대신 마스터가 '자재 시세 관리 → 강제 일괄반영' 버튼으로 시세 데이터에서 아이템을 자동 등록합니다.
   const existingItemCount = await prisma.item.count();
-  if (existingItemCount === 0) {
-    for (const item of items) {
-      await prisma.item.create({ data: { ...item, version: '1.0.0' } });
-    }
-    console.log(`   Created ${items.length} items`);
-  } else {
-    console.log(`   Skipped items (${existingItemCount} already exist)`);
-  }
+  console.log(`   Items seed skipped (${existingItemCount} existing items). Use 시세→강제 일괄반영 to populate from market prices.`);
 
   // Market prices (시세 데이터)
   const existingMarketCount = await prisma.marketPrice.count();
