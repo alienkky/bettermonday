@@ -256,6 +256,193 @@ function simplifyPolygon(pts, tolerance) {
   return out.length >= 3 ? out : pts;
 }
 
+/* ── Douglas-Peucker simplification (indexed array version) ─ */
+function dpSimplify(pts, eps) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = 1;
+  keep[pts.length - 1] = 1;
+
+  function perpDist(p, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy) || 1;
+    return Math.abs(dy * p[0] - dx * p[1] + b[0] * a[1] - b[1] * a[0]) / len;
+  }
+
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [first, last] = stack.pop();
+    let maxD = 0, idx = -1;
+    for (let i = first + 1; i < last; i++) {
+      const d = perpDist(pts[i], pts[first], pts[last]);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > eps && idx >= 0) {
+      keep[idx] = 1;
+      stack.push([first, idx]);
+      stack.push([idx, last]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
+  return out;
+}
+
+/* ── raster + contour extraction ─────────────────────
+   Rasterize all lines to a grid, dilate to close small gaps
+   (doors / openings), flood-fill exterior, trace the interior
+   largest component's contour. Best for complex CADs where
+   walls don't form a clean closed polyline chain.        */
+function rasterContour(lines, cellSize) {
+  if (lines.length === 0) return null;
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const l of lines) {
+    const a = l.vertices[0], b = l.vertices[1];
+    if (a.x < minX) minX = a.x; if (a.x > maxX) maxX = a.x;
+    if (b.x < minX) minX = b.x; if (b.x > maxX) maxX = b.x;
+    if (a.y < minY) minY = a.y; if (a.y > maxY) maxY = a.y;
+    if (b.y < minY) minY = b.y; if (b.y > maxY) maxY = b.y;
+  }
+  const pad = cellSize * 5;
+  minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+
+  const W = Math.ceil((maxX - minX) / cellSize);
+  const H = Math.ceil((maxY - minY) / cellSize);
+  if (W < 5 || H < 5 || W * H > 2_000_000) return null;
+
+  const grid = new Uint8Array(W * H);
+  function setCell(x, y) {
+    if (x >= 0 && x < W && y >= 0 && y < H) grid[y * W + x] = 1;
+  }
+
+  // Bresenham rasterization
+  for (const l of lines) {
+    let x0 = Math.floor((l.vertices[0].x - minX) / cellSize);
+    let y0 = Math.floor((l.vertices[0].y - minY) / cellSize);
+    const x1 = Math.floor((l.vertices[1].x - minX) / cellSize);
+    const y1 = Math.floor((l.vertices[1].y - minY) / cellSize);
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    for (let guard = 0; guard < W + H + 10; guard++) {
+      setCell(x0, y0);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x0 += sx; }
+      if (e2 < dx) { err += dx; y0 += sy; }
+    }
+  }
+
+  // Dilate (close small gaps — doors, openings). Radius tuned to ~30cm.
+  const dilateRadius = Math.max(2, Math.round(300 / cellSize));
+  const dilated = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!grid[y * W + x]) continue;
+      for (let dy = -dilateRadius; dy <= dilateRadius; dy++) {
+        for (let dx = -dilateRadius; dx <= dilateRadius; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < W && ny >= 0 && ny < H) dilated[ny * W + nx] = 1;
+        }
+      }
+    }
+  }
+
+  // Flood-fill from (0,0) corner to mark exterior
+  const exterior = new Uint8Array(W * H);
+  const stack = [0];
+  exterior[0] = 1;
+  while (stack.length) {
+    const p = stack.pop();
+    const px = p % W, py = (p - px) / W;
+    if (px + 1 < W) { const ni = py * W + px + 1; if (!exterior[ni] && !dilated[ni]) { exterior[ni] = 1; stack.push(ni); } }
+    if (px - 1 >= 0) { const ni = py * W + px - 1; if (!exterior[ni] && !dilated[ni]) { exterior[ni] = 1; stack.push(ni); } }
+    if (py + 1 < H) { const ni = (py + 1) * W + px; if (!exterior[ni] && !dilated[ni]) { exterior[ni] = 1; stack.push(ni); } }
+    if (py - 1 >= 0) { const ni = (py - 1) * W + px; if (!exterior[ni] && !dilated[ni]) { exterior[ni] = 1; stack.push(ni); } }
+  }
+
+  // Interior = not dilated AND not exterior
+  const interior = new Uint8Array(W * H);
+  let interiorTotal = 0;
+  for (let i = 0; i < W * H; i++) {
+    if (!dilated[i] && !exterior[i]) { interior[i] = 1; interiorTotal++; }
+  }
+  if (interiorTotal < 10) return null;
+
+  // Find largest connected interior component
+  const comp = new Int32Array(W * H).fill(-1);
+  let bestComp = -1, bestSize = 0;
+  for (let i = 0; i < W * H; i++) {
+    if (!interior[i] || comp[i] >= 0) continue;
+    const myId = i;
+    let size = 0;
+    const q = [i];
+    comp[i] = myId;
+    while (q.length) {
+      const p = q.pop();
+      size++;
+      const px = p % W, py = (p - px) / W;
+      if (px + 1 < W) { const ni = py * W + px + 1; if (interior[ni] && comp[ni] < 0) { comp[ni] = myId; q.push(ni); } }
+      if (px - 1 >= 0) { const ni = py * W + px - 1; if (interior[ni] && comp[ni] < 0) { comp[ni] = myId; q.push(ni); } }
+      if (py + 1 < H) { const ni = (py + 1) * W + px; if (interior[ni] && comp[ni] < 0) { comp[ni] = myId; q.push(ni); } }
+      if (py - 1 >= 0) { const ni = (py - 1) * W + px; if (interior[ni] && comp[ni] < 0) { comp[ni] = myId; q.push(ni); } }
+    }
+    if (size > bestSize) { bestSize = size; bestComp = myId; }
+  }
+  if (bestComp < 0) return null;
+
+  // Build mask
+  const mask = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) if (comp[i] === bestComp) mask[i] = 1;
+
+  // Find topmost-leftmost cell for Moore-Neighbor tracing
+  let startX = -1, startY = -1;
+  outer: for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (mask[y * W + x]) { startX = x; startY = y; break outer; }
+    }
+  }
+  if (startX < 0) return null;
+
+  // Moore-Neighbor contour tracing (8-connected)
+  const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  const contour = [];
+  let cx = startX, cy = startY;
+  let prevDir = 6;  // came from below (index 6 = [0,-1])
+  const maxSteps = W * H;
+  for (let step = 0; step < maxSteps; step++) {
+    contour.push([cx, cy]);
+    let found = false;
+    for (let k = 0; k < 8; k++) {
+      const d = (prevDir + 6 + k) % 8;  // start from (prevDir - 2) mod 8 = turn right
+      const nx = cx + dirs[d][0], ny = cy + dirs[d][1];
+      if (nx >= 0 && nx < W && ny >= 0 && ny < H && mask[ny * W + nx]) {
+        cx = nx; cy = ny;
+        prevDir = d;
+        found = true;
+        break;
+      }
+    }
+    if (!found) break;
+    if (cx === startX && cy === startY) break;
+  }
+  if (contour.length < 4) return null;
+
+  // Simplify: DP with ~60cm tolerance in world coords (= 6 cells for 100mm grid)
+  // Removes door gaps, wall-thickness jitter, and tiny recesses
+  const simplified = dpSimplify(contour, 6);
+  if (simplified.length < 3) return null;
+
+  // Convert back to world coords (align cell center to cell corner used in setCell)
+  // setCell() used floor, so cell (x,y) represents world rectangle [x*cs+minX, (x+1)*cs+minX]
+  // use cell-center to get a good polygon point
+  return simplified.map(([x, y]) => ({
+    x: (x + 0.5) * cellSize + minX,
+    y: (y + 0.5) * cellSize + minY,
+  }));
+}
+
 /* ═══════════════════════════════════════════════════════
    DXF  →  { polygon, widthM, depthM, areaSqm }
    ═══════════════════════════════════════════════════════ */
@@ -299,10 +486,9 @@ function parseDXF(content) {
   const EPS = Math.max(0.01 / scale, 1e-6);  // ≈10mm in native coords
 
   // 7) Build candidate list
-  //    Strategy: try wall-named layers first, then all lines
   const candidates = [];
 
-  // 7a) Closed polylines on wall-layers get highest score
+  // 7a) Closed polylines on wall-layers get highest score (deliberate outlines)
   for (const c of polyCandidates) {
     const score = layerScore(c.layer);
     candidates.push({ pts: c.pts, score: score + 10, source: `POLY/${c.layer || '?'}` });
@@ -323,26 +509,36 @@ function parseDXF(content) {
   for (const { k, score } of wallLayers) {
     const layerLines = linesByLayer.get(k);
     const chain = chainLinesWithEps(layerLines, EPS);
-    if (chain) {
-      candidates.push({ pts: chain, score: score + 5, source: `CHAIN/${k}` });
-    } else if (layerLines.length >= 4) {
-      // Walls are often drawn as parallel pairs and never close →
-      // fall back to convex hull of endpoints (gives correct bounding outline)
-      const pts = [];
-      for (const l of layerLines) pts.push(l.vertices[0], l.vertices[1]);
-      const hull = convexHull(pts);
-      if (hull && hull.length >= 3) {
-        // simplify jitter (CAD corners are slightly offset between wall faces)
-        const simplified = simplifyPolygon(hull, EPS * 5);
-        candidates.push({ pts: simplified, score: score + 3, source: `HULL/${k}` });
-      }
-    }
+    if (chain) candidates.push({ pts: chain, score: score + 5, source: `CHAIN/${k}` });
   }
 
-  // 7c) Fallback — chain ALL lines together
-  if (candidates.length === 0 || !candidates.some(c => c.score >= 5)) {
+  // 7c) ⭐ PRIMARY: raster + contour on ALL lines — preserves concavity
+  //      Works well when walls are drawn as parallel pairs or have door gaps
+  //      cellSize ≈ 100mm in native coords (adjusts for non-mm units)
+  const cellSize = 0.1 / scale;  // 100mm in world
+  try {
+    const contour = rasterContour(lines, cellSize);
+    if (contour && contour.length >= 3) {
+      candidates.push({ pts: contour, score: 8, source: 'RASTER' });
+    }
+  } catch (_) { /* ignore raster errors */ }
+
+  // 7d) Fallback — chain ALL lines together
+  if (candidates.length === 0) {
     const chain = chainLinesWithEps(lines, EPS);
     if (chain) candidates.push({ pts: chain, score: 1, source: 'CHAIN/ALL' });
+  }
+
+  // 7e) Last-resort fallback — convex hull of all wall-layer endpoints
+  if (candidates.length === 0) {
+    const pts = [];
+    for (const { k } of wallLayers) {
+      for (const l of linesByLayer.get(k)) pts.push(l.vertices[0], l.vertices[1]);
+    }
+    if (pts.length >= 3) {
+      const hull = convexHull(pts);
+      if (hull) candidates.push({ pts: simplifyPolygon(hull, EPS * 5), score: 0, source: 'HULL' });
+    }
   }
 
   if (candidates.length === 0) {
