@@ -15,6 +15,26 @@ router.get('/current', async (req, res) => {
   }
 });
 
+// GET /api/versions/public — public list of recent versions (for landing page)
+router.get('/public', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const versions = await prisma.systemVersion.findMany({
+      orderBy: { releasedAt: 'desc' },
+      take: limit,
+      select: {
+        version: true,
+        changelog: true,
+        releasedAt: true,
+        isCurrent: true,
+      },
+    });
+    res.json(versions);
+  } catch (err) {
+    res.status(500).json({ error: '버전 조회 실패' });
+  }
+});
+
 // GET /api/versions — all versions (admin)
 router.get('/', requireAdmin, async (req, res) => {
   try {

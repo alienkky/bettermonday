@@ -1,7 +1,7 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import useBrandStore from '../store/brandStore';
-import { LogOut, LayoutDashboard, Package, FileText, Settings, Users, ChevronDown, Palette, TrendingUp, PlusCircle, FolderOpen, Building2, ShieldCheck, Menu, X } from 'lucide-react';
+import { LogOut, LayoutDashboard, Package, FileText, Settings, Users, ChevronDown, Palette, TrendingUp, PlusCircle, FolderOpen, Building2, ShieldCheck, Menu, X, MessageSquareText } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 export default function Layout({ children }) {
@@ -38,6 +38,7 @@ export default function Layout({ children }) {
           { to: '/master/companies', icon: Building2, label: '업체 관리' },
           { to: '/master/estimates', icon: FileText, label: '전체 견적' },
           { to: '/master/customers', icon: Users, label: '전체 고객' },
+          { to: '/master/inquiries', icon: MessageSquareText, label: '개선 문의' },
         ]},
         { group: '설정', items: [
           { to: '/master/market-prices', icon: TrendingUp, label: '시세' },
@@ -57,12 +58,14 @@ export default function Layout({ children }) {
         ]},
         { group: '설정', items: [
           { to: '/admin/brand', icon: Palette, label: '브랜드' },
+          { to: '/inquiry', icon: MessageSquareText, label: '본사 문의' },
         ]},
       ]
     : [
         { group: '', items: [
           { to: '/start', icon: PlusCircle, label: '공간 만들기', accent: true },
           { to: '/my', icon: FolderOpen, label: '내 견적' },
+          { to: '/inquiry', icon: MessageSquareText, label: '본사 문의' },
         ]},
       ];
 

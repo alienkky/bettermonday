@@ -50,6 +50,7 @@ model User {
   estimates     Estimate[]
   consentLogs   ConsentLog[]
   brandSettings BrandSettings?
+  inquiries     Inquiry[]
 
   @@map("users")
 }
@@ -287,4 +288,28 @@ model SystemVersion {
   isCurrent  Boolean  @default(false) @map("is_current")
 
   @@map("system_versions")
+}
+
+// ─────────────────────────────────────────────
+// INQUIRY (본사 개선 문의)
+// ─────────────────────────────────────────────
+
+model Inquiry {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  role        String    // 'customer' | 'admin' (문의 당시의 역할)
+  category    String    @default("improvement") // 'improvement' | 'bug' | 'question' | 'other'
+  title       String
+  content     String
+  status      String    @default("open") // 'open' | 'in_progress' | 'resolved'
+  response    String?
+  respondedAt DateTime? @map("responded_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("inquiries")
 }

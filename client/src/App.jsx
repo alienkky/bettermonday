@@ -17,6 +17,9 @@ import PlannerPage from './pages/customer/PlannerPage';
 import EstimatePage from './pages/customer/EstimatePage';
 import MyPage from './pages/customer/MyPage';
 
+// Shared pages
+import InquiryPage from './pages/InquiryPage';
+
 // Admin pages
 import AdminLoginPage from './pages/admin/AdminLoginPage';
 import AdminRegisterPage from './pages/admin/AdminRegisterPage';
@@ -34,6 +37,7 @@ import MasterDashboardPage from './pages/master/MasterDashboardPage';
 import CompanyManagementPage from './pages/master/CompanyManagementPage';
 import MasterEstimatesPage from './pages/master/MasterEstimatesPage';
 import MasterCustomersPage from './pages/master/MasterCustomersPage';
+import MasterInquiriesPage from './pages/master/MasterInquiriesPage';
 
 export default function App() {
   return (
@@ -63,6 +67,7 @@ export default function App() {
         <Route path="/planner/:id" element={<ProtectedRoute><PlannerPage /></ProtectedRoute>} />
         <Route path="/estimate/:id" element={<ProtectedRoute><EstimatePage /></ProtectedRoute>} />
         <Route path="/my" element={<ProtectedRoute><MyPage /></ProtectedRoute>} />
+        <Route path="/inquiry" element={<ProtectedRoute><InquiryPage /></ProtectedRoute>} />
 
         {/* Admin routes (인테리어 업체) */}
         <Route path="/admin/dashboard" element={<ProtectedRoute adminOnly><DashboardPage /></ProtectedRoute>} />
@@ -80,6 +85,7 @@ export default function App() {
         <Route path="/master/market-prices" element={<ProtectedRoute masterOnly><MarketPricePage /></ProtectedRoute>} />
         <Route path="/master/versions" element={<ProtectedRoute masterOnly><VersionsPage /></ProtectedRoute>} />
         <Route path="/master/brand" element={<ProtectedRoute masterOnly><BrandSettingsPage /></ProtectedRoute>} />
+        <Route path="/master/inquiries" element={<ProtectedRoute masterOnly><MasterInquiriesPage /></ProtectedRoute>} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

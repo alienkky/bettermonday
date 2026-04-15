@@ -1,15 +1,21 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import useBrandStore from '../store/brandStore';
+import { versionsApi } from '../api/client';
+import { Tag, ChevronDown, ChevronUp, Sparkles, CheckCircle2 } from 'lucide-react';
 
 export default function ModeSelectorPage() {
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuthStore();
   const { brand, fetchBrand } = useBrandStore();
 
+  const [versions, setVersions] = useState([]);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+
   useEffect(() => {
     fetchBrand();
+    versionsApi.public(5).then((res) => setVersions(res.data || [])).catch(() => {});
   }, [fetchBrand]);
 
   // Redirect already-authenticated users
@@ -153,6 +159,81 @@ export default function ModeSelectorPage() {
             </div>
           </div>
         </div>
+
+        {/* ── Version + Changelog ───────────────────────────── */}
+        {versions.length > 0 && (
+          <div className="mt-10 bg-white/70 backdrop-blur rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <button
+              onClick={() => setChangelogOpen((o) => !o)}
+              className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-lg flex items-center justify-center"
+                  style={{ backgroundColor: `${primaryColor}15` }}
+                >
+                  <Sparkles size={16} style={{ color: primaryColor }} />
+                </div>
+                <div className="text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-[#1a1a1a]">현재 버전</span>
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full text-white"
+                      style={{ backgroundColor: primaryColor }}
+                    >
+                      <Tag size={10} /> v{versions.find((v) => v.isCurrent)?.version || versions[0]?.version}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    최근 개선 로그 {versions.length}건 · 클릭하여 {changelogOpen ? '접기' : '펼치기'}
+                  </p>
+                </div>
+              </div>
+              {changelogOpen ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+            </button>
+
+            {changelogOpen && (
+              <div className="border-t border-gray-100 px-5 py-4 max-h-80 overflow-y-auto">
+                <ul className="space-y-4">
+                  {versions.map((v) => (
+                    <li key={v.version} className="flex gap-3">
+                      <div className="flex flex-col items-center">
+                        <div
+                          className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                            v.isCurrent ? 'text-white' : 'bg-gray-100 text-gray-400'
+                          }`}
+                          style={v.isCurrent ? { backgroundColor: primaryColor } : {}}
+                        >
+                          {v.isCurrent ? <CheckCircle2 size={14} /> : <Tag size={12} />}
+                        </div>
+                        <div className="w-px flex-1 bg-gray-200 my-1" />
+                      </div>
+                      <div className="flex-1 pb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-sm text-[#1a1a1a]">v{v.version}</span>
+                          {v.isCurrent && (
+                            <span
+                              className="text-[10px] px-1.5 py-0.5 rounded-full text-white font-semibold"
+                              style={{ backgroundColor: primaryColor }}
+                            >
+                              최신
+                            </span>
+                          )}
+                          <span className="text-[11px] text-gray-400">
+                            {new Date(v.releasedAt).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                          </span>
+                        </div>
+                        {v.changelog && (
+                          <p className="text-xs text-gray-600 mt-1 whitespace-pre-line leading-relaxed">{v.changelog}</p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Master login — subtle link */}
         <p className="text-center text-[10px] text-gray-300 mt-8">

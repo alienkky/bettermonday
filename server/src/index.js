@@ -16,6 +16,7 @@ const masterRoutes = require('./routes/master');
 const versionRoutes = require('./routes/versions');
 const uploadRoutes = require('./routes/upload');
 const marketPriceRoutes = require('./routes/market-prices');
+const inquiryRoutes = require('./routes/inquiries');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -56,6 +57,7 @@ app.use('/api/master', masterRoutes);
 app.use('/api/versions', versionRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/market-prices', marketPriceRoutes);
+app.use('/api/inquiries', inquiryRoutes);
 
 // ── Health ────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

@@ -116,8 +116,19 @@ export const uploadApi = {
 // Versions
 export const versionsApi = {
   current: () => api.get('/versions/current'),
+  public: (limit = 10) => api.get('/versions/public', { params: { limit } }),
   list: () => api.get('/versions'),
   release: (data) => api.post('/versions/release', data),
+};
+
+// Inquiries (본사 개선 문의)
+export const inquiriesApi = {
+  create: (data) => api.post('/inquiries', data),
+  mine: () => api.get('/inquiries/mine'),
+  remove: (id) => api.delete(`/inquiries/${id}`),
+  list: (params) => api.get('/inquiries', { params }),
+  update: (id, data) => api.patch(`/inquiries/${id}`, data),
+  stats: () => api.get('/inquiries/stats/summary'),
 };
 
 // Market Prices (시세 트래킹)
