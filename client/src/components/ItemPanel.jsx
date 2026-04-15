@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Lock, Unlock, ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import usePlannerStore from '../store/plannerStore';
@@ -28,10 +28,75 @@ const CAT_ICONS = {
  * @param {Function} [props.onChanged] 저장/삭제 후 호출 (플래너가 카테고리 재로드)
  * @param {string}   [props.brand]     현재 공간 브랜드 (신규 생성 시 기본값)
  */
+// Panel width constraints. Keep MIN narrow enough for a single column of cards
+// but wide enough for the category header row; keep MAX modest so the canvas
+// still has room to breathe.
+const PANEL_MIN_WIDTH = 200;
+const PANEL_MAX_WIDTH = 520;
+const PANEL_DEFAULT_WIDTH = 256;
+const PANEL_WIDTH_KEY = 'planner.itemPanelWidth';
+
 export default function ItemPanel({ categories, canEdit = false, onChanged, brand }) {
   const [expanded, setExpanded] = useState({});
   const [modal, setModal] = useState(null); // { mode: 'create' | 'edit', item?, categoryId? }
-  usePlannerStore();
+
+  // Width is persisted so navigating away and back preserves the user's choice.
+  const [width, setWidth] = useState(() => {
+    if (typeof window === 'undefined') return PANEL_DEFAULT_WIDTH;
+    const saved = parseInt(localStorage.getItem(PANEL_WIDTH_KEY) || '', 10);
+    if (Number.isFinite(saved) && saved >= PANEL_MIN_WIDTH && saved <= PANEL_MAX_WIDTH) return saved;
+    return PANEL_DEFAULT_WIDTH;
+  });
+  const [resizing, setResizing] = useState(false);
+  const resizeStartRef = useRef({ startX: 0, startWidth: 0 });
+
+  // Global mousemove/mouseup while resizing. Attached only during a drag to
+  // avoid running listeners on every mouse move.
+  useEffect(() => {
+    if (!resizing) return;
+    const onMove = (e) => {
+      const { startX, startWidth } = resizeStartRef.current;
+      const next = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, startWidth + (e.clientX - startX)));
+      setWidth(next);
+    };
+    const onUp = () => {
+      setResizing(false);
+      try { localStorage.setItem(PANEL_WIDTH_KEY, String(resizeStartRef.current.lastWidth ?? width)); } catch {}
+    };
+    // Cache latest width so onUp can persist without re-binding.
+    const wrappedMove = (e) => {
+      onMove(e);
+      const { startX, startWidth } = resizeStartRef.current;
+      resizeStartRef.current.lastWidth = Math.min(
+        PANEL_MAX_WIDTH,
+        Math.max(PANEL_MIN_WIDTH, startWidth + (e.clientX - startX))
+      );
+    };
+    document.addEventListener('mousemove', wrappedMove);
+    document.addEventListener('mouseup', onUp);
+    // Prevent text selection & switch cursor globally during the drag.
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    return () => {
+      document.removeEventListener('mousemove', wrappedMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+    };
+  }, [resizing, width]);
+
+  const startResize = useCallback((e) => {
+    e.preventDefault();
+    resizeStartRef.current = { startX: e.clientX, startWidth: width, lastWidth: width };
+    setResizing(true);
+  }, [width]);
+
+  const resetWidth = useCallback(() => {
+    setWidth(PANEL_DEFAULT_WIDTH);
+    try { localStorage.setItem(PANEL_WIDTH_KEY, String(PANEL_DEFAULT_WIDTH)); } catch {}
+  }, []);
 
   const toggle = (name) => setExpanded((e) => ({ ...e, [name]: !e[name] }));
 
@@ -55,7 +120,10 @@ export default function ItemPanel({ categories, canEdit = false, onChanged, bran
   };
 
   return (
-    <div className="w-64 bg-white border-r border-gray-100 flex flex-col h-full">
+    <div
+      className="relative bg-white border-r border-gray-100 flex flex-col h-full shrink-0"
+      style={{ width: `${width}px` }}
+    >
       <div className="p-4 border-b border-gray-100 flex items-start gap-2">
         <div className="flex-1">
           <h3 className="font-semibold text-[#1a1a1a] text-sm">인테리어 아이템</h3>
@@ -137,6 +205,26 @@ export default function ItemPanel({ categories, canEdit = false, onChanged, bran
           }}
         />
       )}
+
+      {/* Resize handle — drag horizontally to adjust width, double-click to reset */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="아이템 패널 크기 조정"
+        onMouseDown={startResize}
+        onDoubleClick={resetWidth}
+        title="드래그하여 너비 조정 · 더블클릭으로 기본값"
+        className={`absolute top-0 right-0 h-full w-1.5 -mr-0.5 cursor-col-resize z-10 group`}
+      >
+        {/* Thin highlight bar — always visible faintly, brighter on hover/drag */}
+        <div
+          className={`h-full w-[3px] mx-auto transition-colors ${
+            resizing
+              ? 'bg-[#0073ea]'
+              : 'bg-transparent group-hover:bg-[#0073ea]/40'
+          }`}
+        />
+      </div>
     </div>
   );
 }
