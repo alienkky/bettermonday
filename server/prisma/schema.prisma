@@ -122,25 +122,15 @@ enum SpaceShape {
 // ─────────────────────────────────────────────
 
 model Category {
-  id    String       @id @default(uuid())
-  name  CategoryName @unique
-  items Item[]
+  id          String   @id @default(uuid())
+  name        String   @unique              // '도장', '필름' ... (자유 입력 가능)
+  displayName String?  @map("display_name") // 선택: 표시용 별칭
+  sortOrder   Int      @default(0)          @map("sort_order")
+  isActive    Boolean  @default(true)       @map("is_active")
+  createdAt   DateTime @default(now())      @map("created_at")
+  items       Item[]
 
   @@map("categories")
-}
-
-enum CategoryName {
-  painting    // 도장
-  film        // 필름
-  tile        // 타일
-  fabric      // 패브릭
-  lighting    // 조명
-  hardware    // 손잡이
-  stone       // 인조대리석
-  metalwork   // 금속유리
-  plumbing    // 설비/배관
-  woodwork    // 목공자재
-  labor       // 인건비
 }
 
 model Item {

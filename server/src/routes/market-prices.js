@@ -84,56 +84,27 @@ function fmtDate() {
 }
 
 // ─────────────────────────────────────────────
-// MAPPERS — 시세(Market Price) Korean strings → Prisma enums
+// MAPPERS — 단위(한국어 ↔ ItemUnit enum)
 // ─────────────────────────────────────────────
-const CATEGORY_MAP = {
-  '도장': 'painting',
-  '필름': 'film',
-  '타일': 'tile',
-  '패브릭': 'fabric',
-  '조명': 'lighting',
-  '손잡이': 'hardware',
-  '인조대리석': 'stone',
-  '금속유리': 'metalwork',
-  '설비': 'plumbing',
-  '설비/배관': 'plumbing',
-  '목공자재': 'woodwork',
-  '인건비': 'labor',
-};
-
 const UNIT_MAP = {
-  '㎡': 'm2',
-  'm2': 'm2',
-  'm': 'm',
-  'EA': 'ea',
-  'ea': 'ea',
-  '식': 'set',
-  'set': 'set',
-  '인/일': 'day',
-  'day': 'day',
-  '박스': 'box',
-  'box': 'box',
-  '통': 'unit',
-  '매': 'unit',
-};
-
-// 역방향 매퍼 — Item(enum) → MarketPrice(Korean string)
-const CATEGORY_KO = {
-  painting: '도장', film: '필름', tile: '타일', fabric: '패브릭',
-  lighting: '조명', hardware: '손잡이', stone: '인조대리석',
-  metalwork: '금속유리', plumbing: '설비', woodwork: '목공자재', labor: '인건비',
+  '㎡': 'm2', 'm2': 'm2', 'm': 'm',
+  'EA': 'ea', 'ea': 'ea', '식': 'set', 'set': 'set',
+  '인/일': 'day', 'day': 'day', '박스': 'box', 'box': 'box',
+  '통': 'unit', '매': 'unit',
 };
 const UNIT_KO = {
   m2: '㎡', m: 'm', ea: 'EA', set: '식', day: '인/일', box: '박스', unit: '매',
 };
 
-async function ensureCategoryId(koreanCategory) {
-  const enumName = CATEGORY_MAP[koreanCategory];
-  if (!enumName) return null;
+// 카테고리는 자유 String — DB에서 find-or-create
+async function ensureCategoryId(categoryName) {
+  if (!categoryName || typeof categoryName !== 'string') return null;
+  const name = categoryName.trim();
+  if (!name) return null;
   const cat = await prisma.category.upsert({
-    where: { name: enumName },
-    update: {},
-    create: { name: enumName },
+    where: { name },
+    update: { isActive: true },
+    create: { name, isActive: true },
   });
   return cat.id;
 }
@@ -651,7 +622,7 @@ router.post('/import-from-items', requireMaster, async (req, res) => {
         continue;
       }
 
-      const categoryKo = CATEGORY_KO[it.category.name] || it.category.name;
+      const categoryKo = it.category.displayName || it.category.name;
       const unitKo = UNIT_KO[it.unit] || it.unit;
 
       // 초기 시세: 단가를 min/avg/max 동일값으로 시작 (마스터가 추후 편집)

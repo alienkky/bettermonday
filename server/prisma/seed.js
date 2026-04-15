@@ -66,25 +66,35 @@ async function main() {
     },
   });
 
-  // Categories — must match CategoryName enum in schema.prisma
-  const categoryNames = [
-    'painting', 'film', 'tile', 'fabric', 'lighting',
-    'hardware', 'stone', 'metalwork', 'plumbing', 'woodwork', 'labor',
+  // Categories — 동적 String 기반 (기본 한국어 카테고리 시드)
+  const defaultCategories = [
+    { name: '도장', sortOrder: 1 },
+    { name: '필름', sortOrder: 2 },
+    { name: '타일', sortOrder: 3 },
+    { name: '패브릭', sortOrder: 4 },
+    { name: '조명', sortOrder: 5 },
+    { name: '손잡이', sortOrder: 6 },
+    { name: '인조대리석', sortOrder: 7 },
+    { name: '금속유리', sortOrder: 8 },
+    { name: '설비', sortOrder: 9 },
+    { name: '목공자재', sortOrder: 10 },
+    { name: '인건비', sortOrder: 11 },
   ];
 
   const categories = {};
-  for (const name of categoryNames) {
+  for (const { name, sortOrder } of defaultCategories) {
     try {
       const cat = await prisma.category.upsert({
         where: { name },
-        update: {},
-        create: { name },
+        update: { sortOrder, isActive: true },
+        create: { name, sortOrder, isActive: true },
       });
       categories[name] = cat.id;
     } catch (e) {
       console.warn(`   Skip category ${name}: ${e.message}`);
     }
   }
+  console.log(`   ${Object.keys(categories).length} categories ensured`);
 
   // Items seed data
   const items = [

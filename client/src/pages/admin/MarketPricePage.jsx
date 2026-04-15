@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import { marketPricesApi, itemsApi } from '../../api/client';
+import { marketPricesApi, itemsApi, categoriesApi } from '../../api/client';
 import Layout from '../../components/Layout';
+import CategoryManagerModal from '../../components/CategoryManagerModal';
 import toast from 'react-hot-toast';
 import {
   TrendingUp, TrendingDown, RefreshCw, Download, Database,
   Search, ArrowUpDown, ArrowUp, ArrowDown, X, Zap, BarChart3, List,
   Plus, Edit2, Trash2, GitCompare, Link2, Unlink, ChevronRight, AlertTriangle,
-  Inbox, CheckSquare, Square,
+  Inbox, CheckSquare, Square, FolderOpen,
 } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 
 const BRANDS = ['전체', '먼데이커피', '스토리오브라망', '공통'];
-const CATEGORIES = ['전체', '도장', '필름', '타일', '패브릭', '조명', '손잡이', '인조대리석', '금속유리', '설비', '목공자재', '인건비'];
 const BRAND_COLORS = { '먼데이커피': '#f06060', '스토리오브라망': '#60a0f0', '공통': '#a0a0a0' };
 
 export default function MarketPricePage({ readOnly = false }) {
@@ -38,6 +38,19 @@ export default function MarketPricePage({ readOnly = false }) {
   const [pendingSelected, setPendingSelected] = useState(new Set());
   const [importing, setImporting] = useState(false);
   const [applyingId, setApplyingId] = useState(null);
+  const [dbCategories, setDbCategories] = useState([]);
+  const [catManagerOpen, setCatManagerOpen] = useState(false);
+
+  const loadCategories = useCallback(async () => {
+    try {
+      const res = await categoriesApi.list();
+      setDbCategories(res.data);
+    } catch {}
+  }, []);
+  useEffect(() => { loadCategories(); }, [loadCategories]);
+
+  // '전체' + DB 카테고리명 목록
+  const categoryFilterList = ['전체', ...dbCategories.map(c => c.name)];
 
   const loadData = useCallback(async () => {
     try {
@@ -223,6 +236,11 @@ export default function MarketPricePage({ readOnly = false }) {
           <div className="flex items-center gap-2">
             {!readOnly && (
               <>
+                {isMaster && (
+                  <button onClick={() => setCatManagerOpen(true)} className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-purple-200 text-purple-700 hover:bg-purple-50">
+                    <FolderOpen size={14} /> 카테고리 관리
+                  </button>
+                )}
                 <button onClick={handleSeed} className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
                   <Database size={14} /> 초기화
                 </button>
@@ -298,7 +316,7 @@ export default function MarketPricePage({ readOnly = false }) {
                 {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"><X size={14} /></button>}
               </div>
               <div className="flex gap-1 flex-wrap">
-                {CATEGORIES.map(c => (
+                {categoryFilterList.map(c => (
                   <button key={c} onClick={() => setCategory(c)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${category === c ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
                     {c}
@@ -418,14 +436,25 @@ export default function MarketPricePage({ readOnly = false }) {
       </div>
 
       {editModal && (
-        <MarketPriceModal item={editModal === 'create' ? null : editModal}
-          onClose={() => setEditModal(null)} onSaved={() => { setEditModal(null); loadData(); }} />
+        <MarketPriceModal
+          item={editModal === 'create' ? null : editModal}
+          categories={dbCategories}
+          onOpenCategoryManager={() => setCatManagerOpen(true)}
+          onClose={() => setEditModal(null)}
+          onSaved={() => { setEditModal(null); loadData(); loadCategories(); }} />
       )}
 
       {linkModal && (
         <LinkModal marketPrice={linkModal} allItems={allItems}
           onClose={() => setLinkModal(null)}
           onLink={(itemId) => { handleLink(linkModal.id, itemId); setLinkModal(null); }} />
+      )}
+
+      {catManagerOpen && (
+        <CategoryManagerModal
+          onClose={() => setCatManagerOpen(false)}
+          onChanged={() => { loadCategories(); loadData(); }}
+        />
       )}
     </Layout>
   );
@@ -695,12 +724,12 @@ function LinkDropdown({ mpId, allItems, onLink }) {
 
 // ── Edit/Create Modal ──
 
-function MarketPriceModal({ item, onClose, onSaved }) {
+function MarketPriceModal({ item, categories = [], onOpenCategoryManager, onClose, onSaved }) {
   const [form, setForm] = useState({
     brand: item?.brand || '먼데이커피',
     name: item?.name || '',
     spec: item?.spec || '',
-    category: item?.category || '도장',
+    category: item?.category || categories[0]?.name || '',
     unit: item?.unit || '㎡',
     minPrice: item?.minPrice || '',
     maxPrice: item?.maxPrice || '',
@@ -743,9 +772,17 @@ function MarketPriceModal({ item, onClose, onSaved }) {
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">카테고리 *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-gray-600">카테고리 *</label>
+                {onOpenCategoryManager && (
+                  <button type="button" onClick={onOpenCategoryManager} className="text-xs text-[#0073ea] hover:underline flex items-center gap-0.5">
+                    <Plus size={10} /> 카테고리 추가/관리
+                  </button>
+                )}
+              </div>
               <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className={inputCls}>
-                {CATEGORIES.filter(c => c !== '전체').map(c => <option key={c} value={c}>{c}</option>)}
+                {categories.length === 0 && <option value="">(카테고리 없음)</option>}
+                {categories.map(c => <option key={c.id} value={c.name}>{c.displayName || c.name}</option>)}
               </select>
             </div>
           </div>

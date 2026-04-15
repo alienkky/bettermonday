@@ -2,18 +2,19 @@ import { useEffect, useState } from 'react';
 import { itemsApi, categoriesApi } from '../../api/client';
 import Layout from '../../components/Layout';
 import toast from 'react-hot-toast';
-import { Plus, Edit2, ToggleLeft, ToggleRight, Upload, Trash2, Power, PowerOff, DollarSign, X, Download, FileSpreadsheet } from 'lucide-react';
+import { Plus, Edit2, ToggleLeft, ToggleRight, Upload, Trash2, Power, PowerOff, DollarSign, X, Download, FileSpreadsheet, FolderOpen } from 'lucide-react';
+import useAuthStore from '../../store/authStore';
+import CategoryManagerModal from '../../components/CategoryManagerModal';
 
 const UNIT_LABELS = { m2: 'm²', m: 'm', ea: '개', set: '세트', day: '인/일', box: '박스', unit: '매' };
-const CAT_LABELS = {
-  painting: '도장', film: '필름', tile: '타일', fabric: '패브릭',
-  lighting: '조명', hardware: '손잡이', stone: '인조대리석', metalwork: '금속유리',
-  plumbing: '설비/배관', woodwork: '목공자재', labor: '인건비',
-};
+const catLabel = (c) => c?.label || c?.displayName || c?.name || '';
 
 export default function ItemsPage() {
+  const { user } = useAuthStore();
+  const isMaster = user?.role === 'master';
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [catManagerOpen, setCatManagerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState({ category: '', active: 'true' });
@@ -155,6 +156,14 @@ export default function ItemsPage() {
             >
               <FileSpreadsheet size={15} /> 엑셀 업로드
             </button>
+            {isMaster && (
+              <button
+                onClick={() => setCatManagerOpen(true)}
+                className="flex items-center gap-2 border border-purple-200 text-purple-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-50"
+              >
+                <FolderOpen size={15} /> 카테고리 관리
+              </button>
+            )}
             <button
               onClick={() => setModal('create')}
               className="flex items-center gap-2 bg-[#0073ea] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#0060c0]"
@@ -164,6 +173,13 @@ export default function ItemsPage() {
           </div>
         </div>
 
+        {catManagerOpen && (
+          <CategoryManagerModal
+            onClose={() => setCatManagerOpen(false)}
+            onChanged={loadItems}
+          />
+        )}
+
         {/* Filters */}
         <div className="flex gap-3 mb-4 flex-wrap">
           <select
@@ -172,7 +188,7 @@ export default function ItemsPage() {
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0073ea]/20"
           >
             <option value="">전체 카테고리</option>
-            {categories.map((c) => <option key={c.id} value={c.name}>{CAT_LABELS[c.name]}</option>)}
+            {categories.map((c) => <option key={c.id} value={c.name}>{catLabel(c)}</option>)}
           </select>
           <select
             value={filter.active}
@@ -264,7 +280,7 @@ export default function ItemsPage() {
                         'bg-gray-100 text-gray-500'
                       }`}>{item.brand || '공통'}</span>
                     </td>
-                    <td className="px-4 py-3 text-gray-500">{CAT_LABELS[item.category?.name] || item.category?.name}</td>
+                    <td className="px-4 py-3 text-gray-500">{catLabel(item.category)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         {item.imageUrl && <img src={item.imageUrl} alt="" className="w-6 h-6 rounded object-cover" title="평면도" />}
@@ -308,6 +324,8 @@ export default function ItemsPage() {
         <ItemModal
           item={modal === 'create' ? null : modal}
           categories={categories}
+          isMaster={isMaster}
+          onOpenCategoryManager={() => setCatManagerOpen(true)}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); loadItems(); }}
         />
@@ -325,7 +343,7 @@ export default function ItemsPage() {
   );
 }
 
-function ItemModal({ item, categories, onClose, onSaved }) {
+function ItemModal({ item, categories, isMaster, onOpenCategoryManager, onClose, onSaved }) {
   const [form, setForm] = useState({
     categoryId: item?.categoryId || '',
     name: item?.name || '',
@@ -388,12 +406,20 @@ function ItemModal({ item, categories, onClose, onSaved }) {
       <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-xl max-h-[90vh] overflow-y-auto">
         <h2 className="font-semibold text-[#1a1a1a] mb-4">{item ? '아이템 수정' : '새 아이템 추가'}</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <MF label="카테고리 *">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-sm font-medium text-gray-700">카테고리 *</label>
+              {isMaster && onOpenCategoryManager && (
+                <button type="button" onClick={onOpenCategoryManager} className="text-xs text-[#0073ea] hover:underline flex items-center gap-0.5">
+                  <Plus size={10} /> 카테고리 추가/관리
+                </button>
+              )}
+            </div>
             <select name="categoryId" value={form.categoryId} onChange={handleChange} className={inputCls}>
               <option value="">선택하세요</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{CAT_LABELS[c.name]}</option>)}
+              {categories.map((c) => <option key={c.id} value={c.id}>{catLabel(c)}</option>)}
             </select>
-          </MF>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <MF label="아이템 이름 *">
               <input name="name" value={form.name} onChange={handleChange} className={inputCls} />

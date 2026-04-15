@@ -76,6 +76,9 @@ export const itemsApi = {
 // Categories
 export const categoriesApi = {
   list: (params) => api.get('/categories', { params }),
+  create: (data) => api.post('/categories', data),
+  update: (id, data) => api.patch(`/categories/${id}`, data),
+  delete: (id, force) => api.delete(`/categories/${id}`, { params: force ? { force: 'true' } : {} }),
 };
 
 // Placements
