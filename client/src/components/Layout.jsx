@@ -52,6 +52,7 @@ export default function Layout({ children }) {
         { group: '메뉴', items: [
           { to: '/admin/dashboard', icon: LayoutDashboard, label: '대시보드' },
           { to: '/start', icon: PlusCircle, label: '공간 만들기', accent: true },
+          { to: '/my', icon: FolderOpen, label: '내 공간' },
           { to: '/admin/estimates', icon: FileText, label: '견적' },
           { to: '/admin/items', icon: Package, label: '아이템' },
           { to: '/admin/market-prices', icon: TrendingUp, label: '시세' },
