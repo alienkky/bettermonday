@@ -1,7 +1,7 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import useBrandStore from '../store/brandStore';
-import { LogOut, LayoutDashboard, Package, FileText, Settings, Users, ChevronDown, Palette, TrendingUp, PlusCircle, FolderOpen, Building2, ShieldCheck } from 'lucide-react';
+import { LogOut, LayoutDashboard, Package, FileText, Settings, Users, ChevronDown, Palette, TrendingUp, PlusCircle, FolderOpen, Building2, ShieldCheck, Menu, X } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 export default function Layout({ children }) {
@@ -9,9 +9,12 @@ export default function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const { brand, fetchBrand } = useBrandStore();
 
   useEffect(() => { fetchBrand(); }, [fetchBrand]);
+  // Close mobile menu on route change
+  useEffect(() => { setMobileOpen(false); setMenuOpen(false); }, [location.pathname]);
 
   const handleLogout = async () => {
     await logout();
@@ -27,10 +30,56 @@ export default function Layout({ children }) {
   const brandName = brand?.brandName || 'FranchiseSim';
   const logoUrl = brand?.logoUrl;
 
+  // Build role-based nav item list (shared by desktop + mobile)
+  const navItems = isMaster
+    ? [
+        { group: '관리', items: [
+          { to: '/master/dashboard', icon: LayoutDashboard, label: '대시보드' },
+          { to: '/master/companies', icon: Building2, label: '업체 관리' },
+          { to: '/master/estimates', icon: FileText, label: '전체 견적' },
+          { to: '/master/customers', icon: Users, label: '전체 고객' },
+        ]},
+        { group: '설정', items: [
+          { to: '/master/market-prices', icon: TrendingUp, label: '시세' },
+          { to: '/master/items', icon: Package, label: '아이템' },
+          { to: '/master/versions', icon: Settings, label: '버전' },
+          { to: '/master/brand', icon: Palette, label: '브랜드' },
+        ]},
+      ]
+    : isAdmin
+    ? [
+        { group: '메뉴', items: [
+          { to: '/admin/dashboard', icon: LayoutDashboard, label: '대시보드' },
+          { to: '/start', icon: PlusCircle, label: '공간 만들기', accent: true },
+          { to: '/admin/estimates', icon: FileText, label: '견적' },
+          { to: '/admin/items', icon: Package, label: '아이템' },
+          { to: '/admin/market-prices', icon: TrendingUp, label: '시세' },
+        ]},
+        { group: '설정', items: [
+          { to: '/admin/brand', icon: Palette, label: '브랜드' },
+        ]},
+      ]
+    : [
+        { group: '', items: [
+          { to: '/start', icon: PlusCircle, label: '공간 만들기', accent: true },
+          { to: '/my', icon: FolderOpen, label: '내 견적' },
+        ]},
+      ];
+
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: bodyBg }}>
       {/* Top nav */}
-      <header className="h-14 flex items-center px-6 shrink-0 z-50" style={{ backgroundColor: headerBg, color: headerText }}>
+      <header className="h-14 flex items-center px-4 md:px-6 shrink-0 z-50 relative" style={{ backgroundColor: headerBg, color: headerText }}>
+        {/* Mobile hamburger */}
+        <button
+          onClick={() => setMobileOpen((o) => !o)}
+          className="md:hidden p-2 -ml-2 mr-1 rounded hover:bg-white/10"
+          aria-label="메뉴 열기"
+          style={{ color: headerText }}
+        >
+          {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
+
         <Link to={isMaster ? '/master/dashboard' : isAdmin ? '/admin/dashboard' : '/my'} className="flex items-center gap-2 mr-6">
           {isMaster ? (
             <div className="w-7 h-7 rounded flex items-center justify-center bg-gradient-to-br from-violet-600 to-indigo-700">
@@ -41,51 +90,20 @@ export default function Layout({ children }) {
           ) : (
             <div className="w-7 h-7 rounded flex items-center justify-center text-white font-bold text-sm" style={{ backgroundColor: primary }}>{brandName[0]}</div>
           )}
-          <span className="font-semibold text-sm tracking-wide" style={{ color: headerText }}>{isMaster ? 'Master Admin' : brandName}</span>
+          <span className="font-semibold text-sm tracking-wide hidden sm:block" style={{ color: headerText }}>{isMaster ? 'Master Admin' : brandName}</span>
         </Link>
 
-        {isMaster ? (
-          <nav className="flex items-center gap-0.5 flex-1 overflow-x-auto">
-            {/* ── 관리 ── */}
-            <NavGroup label="관리" headerText={headerText}>
-              <NavLink to="/master/dashboard" icon={<LayoutDashboard size={14} />} label="대시보드" current={location.pathname} headerText={headerText} />
-              <NavLink to="/master/companies" icon={<Building2 size={14} />} label="업체 관리" current={location.pathname} headerText={headerText} />
-              <NavLink to="/master/estimates" icon={<FileText size={14} />} label="전체 견적" current={location.pathname} headerText={headerText} />
-              <NavLink to="/master/customers" icon={<Users size={14} />} label="전체 고객" current={location.pathname} headerText={headerText} />
-            </NavGroup>
-
-            <Divider headerText={headerText} />
-
-            {/* ── 시세·아이템·설정 ── */}
-            <NavGroup label="설정" headerText={headerText}>
-              <NavLink to="/master/market-prices" icon={<TrendingUp size={14} />} label="시세" current={location.pathname} headerText={headerText} />
-              <NavLink to="/master/items" icon={<Package size={14} />} label="아이템" current={location.pathname} headerText={headerText} />
-              <NavLink to="/master/versions" icon={<Settings size={14} />} label="버전" current={location.pathname} headerText={headerText} />
-              <NavLink to="/master/brand" icon={<Palette size={14} />} label="브랜드" current={location.pathname} headerText={headerText} />
-            </NavGroup>
-          </nav>
-        ) : isAdmin ? (
-          <nav className="flex items-center gap-0.5 flex-1 overflow-x-auto">
-            <NavGroup label="메뉴" headerText={headerText}>
-              <NavLink to="/admin/dashboard" icon={<LayoutDashboard size={14} />} label="대시보드" current={location.pathname} headerText={headerText} />
-              <NavLink to="/start" icon={<PlusCircle size={14} />} label="공간 만들기" current={location.pathname} headerText={headerText} accent />
-              <NavLink to="/admin/estimates" icon={<FileText size={14} />} label="견적" current={location.pathname} headerText={headerText} />
-              <NavLink to="/admin/items" icon={<Package size={14} />} label="아이템" current={location.pathname} headerText={headerText} />
-              <NavLink to="/admin/market-prices" icon={<TrendingUp size={14} />} label="시세" current={location.pathname} headerText={headerText} />
-            </NavGroup>
-
-            <Divider headerText={headerText} />
-
-            <NavGroup label="설정" headerText={headerText}>
-              <NavLink to="/admin/brand" icon={<Palette size={14} />} label="브랜드" current={location.pathname} headerText={headerText} />
-            </NavGroup>
-          </nav>
-        ) : (
-          <nav className="flex items-center gap-1 flex-1">
-            <NavLink to="/start" label="공간 만들기" current={location.pathname} headerText={headerText} />
-            <NavLink to="/my" label="내 견적" current={location.pathname} headerText={headerText} />
-          </nav>
-        )}
+        {/* Desktop nav */}
+        <nav className="hidden md:flex items-center gap-1 flex-1 overflow-x-auto">
+          {navItems.map((grp, gi) => (
+            <div key={gi} className="flex items-center gap-1">
+              {gi > 0 && <Divider headerText={headerText} />}
+              {grp.items.map((it) => (
+                <NavLink key={it.to} to={it.to} icon={it.icon ? <it.icon size={14} /> : null} label={it.label} current={location.pathname} headerText={headerText} accent={it.accent} primary={primary} />
+              ))}
+            </div>
+          ))}
+        </nav>
 
         {/* User menu */}
         <div className="relative ml-auto shrink-0">
@@ -126,6 +144,43 @@ export default function Layout({ children }) {
             </div>
           )}
         </div>
+
+        {/* Mobile nav drawer */}
+        {mobileOpen && (
+          <>
+            <div
+              className="md:hidden fixed inset-0 top-14 bg-black/40 z-40"
+              onClick={() => setMobileOpen(false)}
+            />
+            <div className="md:hidden absolute left-0 right-0 top-14 bg-white shadow-lg border-t border-gray-200 z-50 max-h-[80vh] overflow-y-auto">
+              {navItems.map((grp, gi) => (
+                <div key={gi} className="py-2 border-b last:border-b-0 border-gray-100">
+                  {grp.group && (
+                    <div className="px-4 py-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{grp.group}</div>
+                  )}
+                  {grp.items.map((it) => {
+                    const Icon = it.icon;
+                    const active = location.pathname === it.to || location.pathname.startsWith(it.to + '/');
+                    return (
+                      <Link
+                        key={it.to}
+                        to={it.to}
+                        onClick={() => setMobileOpen(false)}
+                        className={`flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
+                          active ? 'bg-gray-100 font-semibold text-gray-900' : 'text-gray-700 hover:bg-gray-50'
+                        } ${it.accent ? 'text-[#0073ea]' : ''}`}
+                        style={it.accent ? { color: primary } : {}}
+                      >
+                        {Icon && <Icon size={16} />}
+                        {it.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </header>
 
       <main className="flex-1">{children}</main>
@@ -135,32 +190,33 @@ export default function Layout({ children }) {
 
 /* ── Nav sub-components ─────────────────────────── */
 
-function NavGroup({ label, headerText, children }) {
-  return (
-    <div className="flex items-center gap-0.5">
-      {children}
-    </div>
-  );
-}
-
 function Divider({ headerText }) {
-  return <div className="w-px h-5 mx-1.5 shrink-0" style={{ backgroundColor: headerText + '20' }} />;
+  return <div className="w-px h-5 mx-1 shrink-0" style={{ backgroundColor: headerText + '20' }} />;
 }
 
-function NavLink({ to, icon, label, current, headerText = '#ffffff', accent = false }) {
+function NavLink({ to, icon, label, current, headerText = '#ffffff', accent = false, primary = '#0073ea' }) {
   const active = current === to || current.startsWith(to + '/');
+  if (accent) {
+    // Accent = primary call-to-action ("공간 만들기"). Pill-style, high contrast.
+    return (
+      <Link
+        to={to}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap text-white shadow-sm hover:brightness-110"
+        style={{ backgroundColor: primary }}
+      >
+        {icon}
+        {label}
+      </Link>
+    );
+  }
   return (
     <Link
       to={to}
-      className={`flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap ${
-        active ? 'bg-white/15' : 'hover:bg-white/5'
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+        active ? 'bg-white/15' : 'hover:bg-white/10'
       }`}
       style={{
-        color: active
-          ? headerText
-          : accent
-          ? '#7dd3fc'
-          : headerText + '99',
+        color: active ? headerText : headerText + 'b0',
       }}
     >
       {icon}

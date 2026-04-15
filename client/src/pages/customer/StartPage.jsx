@@ -4,7 +4,7 @@ import { spacesApi, uploadApi } from '../../api/client';
 import Layout from '../../components/Layout';
 import TraceModal from '../../components/TraceModal';
 import toast from 'react-hot-toast';
-import { MapPin, ArrowRight, Upload, FileText, AlertCircle, X, Maximize2, PenTool, Grid3X3, Coffee, Croissant, Edit3 } from 'lucide-react';
+import { MapPin, ArrowRight, Upload, FileText, AlertCircle, X, Maximize2, PenTool, Grid3X3, Coffee, Croissant, Edit3, Check } from 'lucide-react';
 
 export default function StartPage() {
   const navigate = useNavigate();
@@ -147,12 +147,52 @@ export default function StartPage() {
     ? (parseFloat(manual.widthM) * parseFloat(manual.depthM)).toFixed(1)
     : null;
 
+  // ── Step completion for progress indicator ──
+  const spaceDone = inputMethod === 'upload'
+    ? !!parsedPlan
+    : inputMethod === 'manual'
+    ? !!(manual.widthM && manual.depthM)
+    : !!(drawSize.widthM && drawSize.depthM);
+
+  const steps = [
+    { n: 1, label: '브랜드', done: !!form.brand },
+    { n: 2, label: '기본 정보', done: !!form.name },
+    { n: 3, label: '공간', done: spaceDone },
+    { n: 4, label: '높이', done: !!form.heightM },
+  ];
+  const completedCount = steps.filter((s) => s.done).length;
+
   return (
     <Layout>
-      <div className="max-w-2xl mx-auto px-4 py-10">
-        <div className="mb-8">
+      <div className="max-w-2xl mx-auto px-4 py-8 md:py-10">
+        <div className="mb-6">
           <h1 className="text-2xl font-bold text-[#1a1a1a]">공간 정보 입력</h1>
-          <p className="text-gray-500 mt-1">실측 도면을 업로드하면 자동으로 공간이 생성됩니다.</p>
+          <p className="text-gray-500 mt-1 text-sm">실측 도면을 업로드하거나 크기를 직접 입력해 공간을 만드세요.</p>
+        </div>
+
+        {/* ── Progress stepper ────────────────────── */}
+        <div className="mb-6 bg-white rounded-xl border border-gray-100 px-4 py-3">
+          <div className="flex items-center justify-between text-xs mb-2">
+            <span className="text-gray-500">진행 상황</span>
+            <span className="font-semibold text-[#0073ea]">{completedCount} / {steps.length} 완료</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {steps.map((s, i) => (
+              <div key={s.n} className="flex items-center flex-1">
+                <div className={`flex items-center gap-1.5 transition-colors ${s.done ? 'text-[#0073ea]' : 'text-gray-400'}`}>
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                    s.done ? 'bg-[#0073ea] text-white' : 'bg-gray-100 text-gray-500'
+                  }`}>
+                    {s.done ? <Check size={12} /> : s.n}
+                  </div>
+                  <span className="text-[11px] font-medium whitespace-nowrap hidden sm:inline">{s.label}</span>
+                </div>
+                {i < steps.length - 1 && (
+                  <div className={`flex-1 h-0.5 mx-1 rounded-full ${s.done ? 'bg-[#0073ea]/40' : 'bg-gray-200'}`} />
+                )}
+              </div>
+            ))}
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">

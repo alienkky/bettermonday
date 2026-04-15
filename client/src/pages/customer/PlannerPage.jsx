@@ -29,6 +29,18 @@ export default function PlannerPage() {
     loadAll();
   }, [id]);
 
+  // Warn user if they try to close/reload page with unsaved changes
+  useEffect(() => {
+    const handler = (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
   const handleDrawComplete = async (polygon, polygonIndex = 0) => {
     try {
       const currentSpace = usePlannerStore.getState().space;
@@ -305,7 +317,22 @@ export default function PlannerPage() {
           </span>
           <SpaceInfo />
           <div className="ml-auto flex items-center gap-2">
-            {isDirty && <span className="text-xs text-orange-500 bg-orange-50 px-2 py-0.5 rounded">저장 안됨</span>}
+            {saving ? (
+              <span className="flex items-center gap-1.5 text-xs text-[#0073ea] bg-[#e6f3ff] px-2.5 py-1 rounded-full font-medium">
+                <span className="w-2 h-2 rounded-full bg-[#0073ea] animate-pulse" />
+                저장 중…
+              </span>
+            ) : isDirty ? (
+              <span className="flex items-center gap-1.5 text-xs text-orange-600 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-full font-medium">
+                <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                저장 안됨
+              </span>
+            ) : (
+              <span className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                저장됨
+              </span>
+            )}
             <button onClick={loadAll} className="flex items-center gap-1 text-xs text-gray-500 hover:text-[#0073ea] px-2 py-1 rounded hover:bg-gray-50">
               <RotateCcw size={13} /> 새로고침
             </button>
@@ -361,15 +388,19 @@ export default function PlannerPage() {
 
       {/* Consult modal */}
       {consultModal && (
-        <Modal title="상담 신청" onClose={() => setConsultModal(false)}>
-          <p className="text-sm text-gray-500 mb-4">담당자가 연락드립니다. 연락처를 입력하세요.</p>
+        <Modal title="인테리어 상담 신청" onClose={() => setConsultModal(false)}>
+          <p className="text-sm text-gray-500 mb-4">
+            현재 견적을 담당자에게 전달하고 <strong className="text-[#1a1a1a]">상세 상담</strong>을 요청합니다.
+            <br />
+            <span className="text-xs text-gray-400">영업일 기준 1-2일 내 연락드립니다.</span>
+          </p>
           <div className="space-y-3">
-            <ModalField label="이름" value={consultForm.name} onChange={(v) => setConsultForm((f) => ({ ...f, name: v }))} />
-            <ModalField label="연락처" value={consultForm.phone} onChange={(v) => setConsultForm((f) => ({ ...f, phone: v }))} placeholder="010-0000-0000" />
+            <ModalField label="이름 *" value={consultForm.name} onChange={(v) => setConsultForm((f) => ({ ...f, name: v }))} />
+            <ModalField label="연락처 *" value={consultForm.phone} onChange={(v) => setConsultForm((f) => ({ ...f, phone: v }))} placeholder="010-0000-0000" />
           </div>
           <div className="flex gap-2 mt-6">
             <button onClick={() => setConsultModal(false)} className="flex-1 border border-gray-200 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50">취소</button>
-            <button onClick={submitConsult} className="flex-1 bg-[#0073ea] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#0060c0]">신청하기</button>
+            <button onClick={submitConsult} className="flex-1 bg-[#0073ea] text-white py-2 rounded-lg text-sm font-semibold hover:bg-[#0060c0]">상담 신청하기</button>
           </div>
         </Modal>
       )}

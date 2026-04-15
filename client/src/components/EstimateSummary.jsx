@@ -81,7 +81,8 @@ export default function EstimateSummary({ onSave, onConsult, saving }) {
         <button
           onClick={onSave}
           disabled={saving || est.subtotal === 0}
-          className="w-full bg-[#0073ea] hover:bg-[#0060c0] text-white font-medium py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-40"
+          className="w-full bg-[#0073ea] hover:bg-[#0060c0] text-white font-semibold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-40 shadow-sm"
+          title="견적 내용을 내 계정에 저장합니다"
         >
           <Save size={15} />
           {saving ? '저장 중...' : '견적 저장'}
@@ -90,10 +91,15 @@ export default function EstimateSummary({ onSave, onConsult, saving }) {
           onClick={onConsult}
           disabled={est.subtotal === 0}
           className="w-full border border-[#0073ea] text-[#0073ea] hover:bg-blue-50 font-medium py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-40"
+          title="담당자에게 상담을 요청합니다"
         >
           <MessageCircle size={15} />
-          상담 신청
+          상담 신청하기
         </button>
+        <p className="text-[10px] text-gray-400 text-center leading-relaxed">
+          저장한 견적은 <strong>내 견적</strong>에서 확인할 수 있으며,<br />
+          상담 신청 시 담당자가 연락드립니다.
+        </p>
       </div>
     </div>
   );
