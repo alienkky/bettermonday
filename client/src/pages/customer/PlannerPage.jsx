@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { spacesApi, categoriesApi, placementsApi, estimatesApi } from '../../api/client';
 import usePlannerStore from '../../store/plannerStore';
@@ -23,6 +23,8 @@ export default function PlannerPage() {
   const [consultModal, setConsultModal] = useState(false);
   const [consultForm, setConsultForm] = useState({ name: user?.name || '', phone: user?.phone || '' });
   const [lastEstimateId, setLastEstimateId] = useState(null);
+  // Track pending polygon save to prevent race conditions with handleSave
+  const pendingDrawSaveRef = useRef(null);
   const [canvasView, setCanvasView] = useState('floor'); // 'floor' | 'facade'
 
   // admin/master 만 플래너에서 아이템 CRUD 허용 (itemsApi.create/update/delete는 requireAdmin).
@@ -59,124 +61,135 @@ export default function PlannerPage() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
-  const handleDrawComplete = async (polygon, polygonIndex = 0) => {
-    try {
-      const currentSpace = usePlannerStore.getState().space;
-      const existingZones = currentSpace?.layoutJson?.zones || [];
+  const handleDrawComplete = (polygon, polygonIndex = 0) => {
+    const savePromise = (async () => {
+      try {
+        const currentSpace = usePlannerStore.getState().space;
+        const existingLayout = currentSpace?.layoutJson || {};
+        const existingZones = existingLayout.zones || [];
 
-      // Build polygons array from current layout (backward compatible)
-      const layoutJson = currentSpace?.layoutJson;
-      let currentPolygons;
-      if (layoutJson?.polygons?.length) {
-        currentPolygons = layoutJson.polygons;
-      } else if (layoutJson?.polygon?.length >= 3) {
-        currentPolygons = [{ id: 'main', name: '주 공간', vertices: layoutJson.polygon }];
-      } else {
-        currentPolygons = [];
-      }
-
-      let newPolygons;
-      if (polygon === null && polygonIndex > 0) {
-        // Delete polygon at index
-        newPolygons = currentPolygons.filter((_, i) => i !== polygonIndex);
-      } else if (!polygon || polygon.length < 3) {
-        return;
-      } else if (polygonIndex === -1) {
-        // Add new polygon
-        newPolygons = [...currentPolygons, {
-          id: `poly-${Date.now()}`,
-          name: `추가 공간 ${currentPolygons.length}`,
-          vertices: polygon,
-        }];
-      } else if (polygonIndex >= currentPolygons.length) {
-        // First polygon or index beyond current — create new entry
-        newPolygons = [...currentPolygons, {
-          id: polygonIndex === 0 ? 'main' : `poly-${Date.now()}`,
-          name: polygonIndex === 0 ? '주 공간' : `추가 공간 ${currentPolygons.length}`,
-          vertices: polygon,
-        }];
-      } else {
-        // Update existing polygon at index
-        newPolygons = currentPolygons.map((p, i) =>
-          i === polygonIndex ? { ...p, vertices: polygon } : p
-        );
-      }
-
-      // Calculate total area from all polygons
-      const calcArea = (verts) => {
-        if (!verts || verts.length < 3) return 0;
-        let a = 0;
-        for (let i = 0; i < verts.length; i++) {
-          const j = (i + 1) % verts.length;
-          a += verts[i].x * verts[j].y - verts[j].x * verts[i].y;
+        // Build polygons array from current layout (backward compatible)
+        let currentPolygons;
+        if (existingLayout.polygons?.length) {
+          currentPolygons = existingLayout.polygons;
+        } else if (existingLayout.polygon?.length >= 3) {
+          currentPolygons = [{ id: 'main', name: '주 공간', vertices: existingLayout.polygon }];
+        } else {
+          currentPolygons = [];
         }
-        return Math.abs(a / 2);
-      };
-      const areaSqm = parseFloat(newPolygons.reduce((sum, p) => sum + calcArea(p.vertices), 0).toFixed(2));
 
-      const res = await spacesApi.update(id, {
-        layoutJson: { polygons: newPolygons, zones: existingZones },
-        areaSqm,
-      });
-      setSpace(res.data);
+        let newPolygons;
+        if (polygon === null && polygonIndex > 0) {
+          // Delete polygon at index
+          newPolygons = currentPolygons.filter((_, i) => i !== polygonIndex);
+        } else if (!polygon || polygon.length < 3) {
+          return;
+        } else if (polygonIndex === -1) {
+          // Add new polygon
+          newPolygons = [...currentPolygons, {
+            id: `poly-${Date.now()}`,
+            name: `추가 공간 ${currentPolygons.length}`,
+            vertices: polygon,
+          }];
+        } else if (polygonIndex >= currentPolygons.length) {
+          // First polygon or index beyond current — create new entry
+          newPolygons = [...currentPolygons, {
+            id: polygonIndex === 0 ? 'main' : `poly-${Date.now()}`,
+            name: polygonIndex === 0 ? '주 공간' : `추가 공간 ${currentPolygons.length}`,
+            vertices: polygon,
+          }];
+        } else {
+          // Update existing polygon at index
+          newPolygons = currentPolygons.map((p, i) =>
+            i === polygonIndex ? { ...p, vertices: polygon } : p
+          );
+        }
 
-      if (polygon === null) toast.success('도면이 삭제되었습니다.');
-      else if (polygonIndex === -1) toast.success('추가 도면이 저장되었습니다!');
-      else toast.success('공간 형태가 저장되었습니다!');
-    } catch {
-      toast.error('공간 형태 저장 실패');
-    }
+        // Calculate total area from all polygons
+        const calcArea = (verts) => {
+          if (!verts || verts.length < 3) return 0;
+          let a = 0;
+          for (let i = 0; i < verts.length; i++) {
+            const j = (i + 1) % verts.length;
+            a += verts[i].x * verts[j].y - verts[j].x * verts[i].y;
+          }
+          return Math.abs(a / 2);
+        };
+        const areaSqm = parseFloat(newPolygons.reduce((sum, p) => sum + calcArea(p.vertices), 0).toFixed(2));
+
+        // Preserve facade and other layout keys when saving polygons
+        const res = await spacesApi.update(id, {
+          layoutJson: { ...existingLayout, polygons: newPolygons, zones: existingZones },
+          areaSqm,
+        });
+        console.debug('[PLANNER] handleDrawComplete — saved layoutJson:',
+          JSON.stringify(res.data.layoutJson).slice(0, 300));
+        setSpace(res.data);
+
+        if (polygon === null) toast.success('도면이 삭제되었습니다.');
+        else if (polygonIndex === -1) toast.success('추가 도면이 저장되었습니다!');
+        else toast.success('공간 형태가 저장되었습니다!');
+      } catch {
+        toast.error('공간 형태 저장 실패');
+      }
+    })();
+    pendingDrawSaveRef.current = savePromise;
+    savePromise.finally(() => { pendingDrawSaveRef.current = null; });
   };
 
-  const handleFacadeDrawComplete = async (polygon, polygonIndex = 0) => {
-    try {
-      const currentSpace = usePlannerStore.getState().space;
-      const existingFacade = currentSpace?.layoutJson?.facade || {};
+  const handleFacadeDrawComplete = (polygon, polygonIndex = 0) => {
+    const savePromise = (async () => {
+      try {
+        const currentSpace = usePlannerStore.getState().space;
+        const existingFacade = currentSpace?.layoutJson?.facade || {};
 
-      let currentPolygons;
-      if (existingFacade.polygons?.length) {
-        currentPolygons = existingFacade.polygons;
-      } else {
-        currentPolygons = [];
+        let currentPolygons;
+        if (existingFacade.polygons?.length) {
+          currentPolygons = existingFacade.polygons;
+        } else {
+          currentPolygons = [];
+        }
+
+        let newPolygons;
+        if (polygon === null && polygonIndex > 0) {
+          newPolygons = currentPolygons.filter((_, i) => i !== polygonIndex);
+        } else if (!polygon || polygon.length < 3) {
+          return;
+        } else if (polygonIndex === -1) {
+          newPolygons = [...currentPolygons, {
+            id: `facade-${Date.now()}`,
+            name: `파사드 ${currentPolygons.length + 1}`,
+            vertices: polygon,
+          }];
+        } else if (polygonIndex >= currentPolygons.length) {
+          newPolygons = [...currentPolygons, {
+            id: polygonIndex === 0 ? 'facade-main' : `facade-${Date.now()}`,
+            name: polygonIndex === 0 ? '전면부' : `파사드 ${currentPolygons.length + 1}`,
+            vertices: polygon,
+          }];
+        } else {
+          newPolygons = currentPolygons.map((p, i) =>
+            i === polygonIndex ? { ...p, vertices: polygon } : p
+          );
+        }
+
+        const res = await spacesApi.update(id, {
+          layoutJson: {
+            ...currentSpace.layoutJson,
+            facade: { polygons: newPolygons },
+          },
+        });
+        setSpace(res.data);
+
+        if (polygon === null) toast.success('파사드 도면이 삭제되었습니다.');
+        else if (polygonIndex === -1) toast.success('파사드 도면이 추가되었습니다!');
+        else toast.success('파사드가 저장되었습니다!');
+      } catch {
+        toast.error('파사드 저장 실패');
       }
-
-      let newPolygons;
-      if (polygon === null && polygonIndex > 0) {
-        newPolygons = currentPolygons.filter((_, i) => i !== polygonIndex);
-      } else if (!polygon || polygon.length < 3) {
-        return;
-      } else if (polygonIndex === -1) {
-        newPolygons = [...currentPolygons, {
-          id: `facade-${Date.now()}`,
-          name: `파사드 ${currentPolygons.length + 1}`,
-          vertices: polygon,
-        }];
-      } else if (polygonIndex >= currentPolygons.length) {
-        newPolygons = [...currentPolygons, {
-          id: polygonIndex === 0 ? 'facade-main' : `facade-${Date.now()}`,
-          name: polygonIndex === 0 ? '전면부' : `파사드 ${currentPolygons.length + 1}`,
-          vertices: polygon,
-        }];
-      } else {
-        newPolygons = currentPolygons.map((p, i) =>
-          i === polygonIndex ? { ...p, vertices: polygon } : p
-        );
-      }
-
-      const res = await spacesApi.update(id, {
-        layoutJson: {
-          ...currentSpace.layoutJson,
-          facade: { polygons: newPolygons },
-        },
-      });
-      setSpace(res.data);
-
-      if (polygon === null) toast.success('파사드 도면이 삭제되었습니다.');
-      else if (polygonIndex === -1) toast.success('파사드 도면이 추가되었습니다!');
-      else toast.success('파사드가 저장되었습니다!');
-    } catch {
-      toast.error('파사드 저장 실패');
-    }
+    })();
+    pendingDrawSaveRef.current = savePromise;
+    savePromise.finally(() => { pendingDrawSaveRef.current = null; });
   };
 
   const loadAll = async () => {
@@ -189,6 +202,8 @@ export default function PlannerPage() {
         placementsApi.list(id),
       ]);
 
+      console.debug('[PLANNER] loadAll — space.layoutJson:',
+        JSON.stringify(spaceRes.data.layoutJson).slice(0, 300));
       setSpace(spaceRes.data);
       setCategories(catsRes.data);
 
@@ -246,6 +261,12 @@ export default function PlannerPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Wait for any in-flight polygon save to finish first (prevents race condition
+      // where handleSave reads stale layoutJson before handleDrawComplete's setSpace)
+      if (pendingDrawSaveRef.current) {
+        await pendingDrawSaveRef.current;
+      }
+
       // Sync placements
       const syncData = placements.map((p) => ({
         itemId: p.itemId,
@@ -257,13 +278,12 @@ export default function PlannerPage() {
       }));
       await placementsApi.sync(id, syncData);
 
-      // Save zones to layoutJson
+      // Save zones to layoutJson (always merge — preserves polygons + facade)
       const currentZones = usePlannerStore.getState().zones;
-      if (currentZones.length > 0) {
-        const currentSpace = usePlannerStore.getState().space;
-        const layoutJson = { ...(currentSpace?.layoutJson || {}), zones: currentZones };
-        await spacesApi.update(id, { layoutJson });
-      }
+      const currentSpace = usePlannerStore.getState().space;
+      const layoutJson = { ...(currentSpace?.layoutJson || {}), zones: currentZones };
+      const spaceUpd = await spacesApi.update(id, { layoutJson });
+      setSpace(spaceUpd.data);
 
       // Create estimate
       const est = getEstimate();

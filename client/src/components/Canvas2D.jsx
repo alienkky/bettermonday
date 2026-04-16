@@ -8,15 +8,23 @@ import {
 import IsometricPreview from './IsometricPreview';
 
 const fabric    = fabricLib.fabric ?? fabricLib;
-const GRID_SIZE = 40;   // px = 0.5 m  (visual grid)
-const SNAP_PX   = 8;    // px = 0.1 m  (snap resolution)
 const SCALE     = 80;   // px / m
+// Visual grid: minor = 0.1 m (100 mm), major = 1 m. Picking a small minor cell
+// gives users a denser reference so they can see where 10 mm snap points land.
+const GRID_M    = 0.1;
+const GRID_SIZE = GRID_M * SCALE;   // 8 px per 0.1 m cell
+// Snap resolution: 10 mm = 0.01 m. Measured in meters so future SCALE changes
+// don't require updating the snap granularity separately.
+const SNAP_M    = 0.01;
+const SNAP_PX   = SNAP_M * SCALE;   // 0.8 px
 const MIN_ZOOM  = 0.1;
 const MAX_ZOOM  = 5;
 const OFFSET    = 60;   // world-space margin around room (px)
 
 /* ── helpers ──────────────────────────────────────────── */
 const snapPx   = (v) => Math.round(v / SNAP_PX) * SNAP_PX;
+/** Format a meter-space length as millimetre string, e.g. 2.345 → "2345mm" */
+const fmtMm    = (m) => `${Math.round(m * 1000)}mm`;
 const areaM2   = (pts) => {
   if (!pts || pts.length < 3) return 0;
   let a = 0;
@@ -85,10 +93,13 @@ function attachInfiniteGrid(canvas) {
       ctx.restore();
     };
 
-    // 0.5 m minor grid
-    drawLines(GRID_SIZE * z, '#e8e9eb', 0.5);
-    // 1 m major grid
-    drawLines(GRID_SIZE * 2 * z, '#d1d5db', 1);
+    // Hide the 0.1 m minor grid once zoomed out so the canvas doesn't turn
+    // into a solid grey block — only draw it when each cell is at least ~5 px.
+    if (GRID_SIZE * z >= 5) {
+      drawLines(GRID_SIZE * z, '#eef0f2', 0.5);      // 0.1 m minor
+    }
+    drawLines(GRID_SIZE * 5 * z, '#dde1e5', 0.5);    // 0.5 m medium
+    drawLines(GRID_SIZE * 10 * z, '#c5cbd2', 1);     // 1   m major
   };
 }
 
@@ -132,15 +143,15 @@ function buildRoom(canvas, roomW, roomH, widthM, depthM, isCustom, hasPoly) {
   const xs = widthM > 20 ? 5 : widthM > 10 ? 2 : 1;
   const ys = depthM > 20 ? 5 : depthM > 10 ? 2 : 1;
   for (let i = 0; i <= widthM; i += xs) {
-    const t = new fabric.Text(`${i}m`, {
-      left: ox + i * SCALE - 10, top: oy - 18,
+    const t = new fabric.Text(`${i * 1000}mm`, {
+      left: ox + i * SCALE - 14, top: oy - 18,
       fontSize: 9, fill: '#9ca3af', selectable: false, evented: false,
     });
     t._room = true; canvas.add(t);
   }
   for (let i = 0; i <= depthM; i += ys) {
-    const t = new fabric.Text(`${i}m`, {
-      left: ox - 30, top: oy + i * SCALE - 7,
+    const t = new fabric.Text(`${i * 1000}mm`, {
+      left: ox - 42, top: oy + i * SCALE - 7,
       fontSize: 9, fill: '#9ca3af', selectable: false, evented: false,
     });
     t._room = true; canvas.add(t);
@@ -167,7 +178,7 @@ const renderPoly = (canvas, polygon, fillOverride) => {
     const my  = (pt.y + nx.y) / 2 * SCALE + OFFSET;
     const dx  = (nx.x - pt.x) * SCALE, dy = (nx.y - pt.y) * SCALE;
     const mag = Math.hypot(dx, dy) || 1;
-    const lbl = new fabric.Text(`${len.toFixed(1)}m`, {
+    const lbl = new fabric.Text(fmtMm(len), {
       left: mx + (-dy / mag) * 16 - 14, top: my + (dx / mag) * 16 - 9,
       fontSize: 11, fill: '#0073ea', fontWeight: 'bold',
       backgroundColor: 'rgba(255,255,255,0.9)', padding: 2,
@@ -216,7 +227,7 @@ const renderEditPoly = (canvas, polygon) => {
     const my = (pt.y + nx.y) / 2 * SCALE + OFFSET;
     const dx = (nx.x - pt.x) * SCALE, dy = (nx.y - pt.y) * SCALE;
     const mag = Math.hypot(dx, dy) || 1;
-    const lbl = new fabric.Text(`${len.toFixed(1)}m`, {
+    const lbl = new fabric.Text(fmtMm(len), {
       left: mx + (-dy / mag) * 16 - 14, top: my + (dx / mag) * 16 - 9,
       fontSize: 11, fill: '#0073ea', fontWeight: 'bold',
       backgroundColor: 'rgba(255,255,255,0.9)', padding: 2,
@@ -256,7 +267,7 @@ const renderAdditionalPolys = (canvas, polygons) => {
       const my = (pt.y + nx.y) / 2 * SCALE + OFFSET;
       const dx = (nx.x - pt.x) * SCALE, dy = (nx.y - pt.y) * SCALE;
       const mag = Math.hypot(dx, dy) || 1;
-      const lbl = new fabric.Text(`${len.toFixed(1)}m`, {
+      const lbl = new fabric.Text(fmtMm(len), {
         left: mx + (-dy / mag) * 16 - 14, top: my + (dx / mag) * 16 - 9,
         fontSize: 11, fill: '#0073ea', fontWeight: 'bold',
         backgroundColor: 'rgba(255,255,255,0.9)', padding: 2,
@@ -362,7 +373,7 @@ const renderEditableZones = (canvas, zones, savedPoly) => {
 
     // Zone label: name + dimensions + area
     const area = (z.w * z.h).toFixed(1);
-    const lblText = `${z.name}\n${z.w.toFixed(1)}×${z.h.toFixed(1)}m  ${area}m²`;
+    const lblText = `${z.name}\n${fmtMm(z.w)}×${fmtMm(z.h)}  ${area}m²`;
     const lbl = new fabric.Text(lblText, {
       left: left + 6, top: top + 4,
       fontSize: 11, fill: color, fontWeight: 'bold',
@@ -699,7 +710,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
       });
       ln._drawObj = true; canvas.add(ln); state.objs.push(ln);
       const lenM = Math.hypot((wx - last.x) / SCALE, (wy - last.y) / SCALE);
-      const lbl  = new fabric.Text(`${lenM.toFixed(1)}m`, {
+      const lbl  = new fabric.Text(fmtMm(lenM), {
         left: (last.x + wx) / 2 - 12, top: (last.y + wy) / 2 - 18,
         fontSize: 11, fill: '#0073ea', fontWeight: 'bold',
         backgroundColor: 'rgba(255,255,255,0.9)', padding: 2,
@@ -721,7 +732,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
     const wx   = snapPx(raw.x), wy = snapPx(raw.y);
     if (state.preview) canvas.remove(state.preview);
     const last = state.points[state.points.length - 1].canvasPos;
-    setPreviewLen(Math.hypot((wx - last.x) / SCALE, (wy - last.y) / SCALE).toFixed(1));
+    setPreviewLen(fmtMm(Math.hypot((wx - last.x) / SCALE, (wy - last.y) / SCALE)));
     state.preview = new fabric.Line([last.x, last.y, wx, wy], {
       stroke: '#0073ea', strokeWidth: 1.5, strokeDashArray: [6, 4],
       selectable: false, evented: false,
@@ -821,13 +832,15 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
   const ctxOpenMove = useCallback(() => {
     if (!ctxMenu) return;
     const pt = editPolyRef.current[ctxMenu.idx];
-    setMoveInput({ idx: ctxMenu.idx, x: pt.x.toFixed(2), y: pt.y.toFixed(2) });
+    // Dialog stores values in millimetres; convert from meter-space coordinates
+    setMoveInput({ idx: ctxMenu.idx, x: Math.round(pt.x * 1000), y: Math.round(pt.y * 1000) });
     setCtxMenu(null);
   }, [ctxMenu]);
 
   const applyMove = useCallback(() => {
     const canvas = fabricRef.current; if (!canvas || !moveInput) return;
-    const nx = parseFloat(moveInput.x), ny = parseFloat(moveInput.y);
+    // Inputs are in millimetres — convert back to meters for the stored polygon
+    const nx = parseFloat(moveInput.x) / 1000, ny = parseFloat(moveInput.y) / 1000;
     if (isNaN(nx) || isNaN(ny)) return;
     const np = editPolyRef.current.map((p, i) => i === moveInput.idx ? { x: nx, y: ny } : p);
     editPolyRef.current = np; setArea(areaM2(np));
@@ -1120,8 +1133,10 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
     let drawPreview = null;
     let drawLabel = null;   // live dimension label while drawing
 
-    // Snap to 0.1m grid (same as vertex snapping: SNAP_PX=8, SCALE=80 → 0.1m)
-    const SNAP_M = 0.1;
+    // Snap zone drawing/resize to 10 mm — matches the vertex-snap resolution
+    // (module-level SNAP_M = 0.01) so zones line up with walls perfectly.
+    // NOTE: local name shadows the module-level SNAP_M below on purpose.
+    const SNAP_M = 0.01;
     const snapGrid = (v) => Math.round(v / SNAP_M) * SNAP_M;
 
     const handleMouseDown = (opt) => {
@@ -1161,7 +1176,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
 
       // Live dimension label
       const area = (w * h).toFixed(1);
-      drawLabel = new fabric.Text(`${w.toFixed(1)} × ${h.toFixed(1)}m\n${area}m²`, {
+      drawLabel = new fabric.Text(`${fmtMm(w)} × ${fmtMm(h)}\n${area}m²`, {
         left: x * SCALE + OFFSET + 6,
         top: y * SCALE + OFFSET + 6,
         fontSize: 12, fill: '#3b82f6', fontWeight: 'bold',
@@ -1189,7 +1204,9 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
       if (w < 0.3 || h < 0.3) { canvas.renderAll(); return; }
       const currentZones = usePlannerStore.getState().zones;
       const name = ZONE_NAMES[currentZones.length] || `구역 ${currentZones.length + 1}`;
-      addZone({ id: `zone-${Date.now()}`, name, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, w: Math.round(w * 10) / 10, h: Math.round(h * 10) / 10 });
+      // Round to 10 mm (0.01 m) to match snap resolution
+      const r = (v) => Math.round(v * 100) / 100;
+      addZone({ id: `zone-${Date.now()}`, name, x: r(x), y: r(y), w: r(w), h: r(h) });
     };
 
     const handleModified = (e) => {
@@ -1223,7 +1240,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
         const zh = zone ? zone.h : (obj.height / SCALE);
         lbl.set({
           left: obj.left + 6, top: obj.top + 4,
-          text: `${zone?.name || ''}\n${zw.toFixed(1)}×${zh.toFixed(1)}m  ${(zw * zh).toFixed(1)}m²\n(${mx.toFixed(1)}, ${my.toFixed(1)})`,
+          text: `${zone?.name || ''}\n${fmtMm(zw)}×${fmtMm(zh)}  ${(zw * zh).toFixed(1)}m²\n(${fmtMm(mx)}, ${fmtMm(my)})`,
         });
       }
     };
@@ -1240,7 +1257,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
         const area = (newW * newH).toFixed(1);
         lbl.set({
           left: obj.left + 6, top: obj.top + 4,
-          text: `${zone?.name || ''}\n${newW.toFixed(1)}×${newH.toFixed(1)}m  ${area}m²`,
+          text: `${zone?.name || ''}\n${fmtMm(newW)}×${fmtMm(newH)}  ${area}m²`,
         });
       }
     };
@@ -1288,7 +1305,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
         <div className="absolute top-10 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-[#0073ea] text-white text-xs px-4 py-2 rounded-full shadow-lg whitespace-nowrap pointer-events-auto">
           <Pencil size={12} />
           {drawTarget === 'new' ? '추가 도면 그리기' : facadeMode ? '파사드 꼭짓점 추가' : '클릭으로 꼭짓점 추가'} ({drawCount}점)
-          {previewLen && drawCount > 0 && <span className="opacity-80 ml-1">→ {previewLen}m</span>}
+          {previewLen && drawCount > 0 && <span className="opacity-80 ml-1">→ {previewLen}</span>}
           {drawCount >= 3 ? ' · 첫 점 클릭으로 완성' : ' · 최소 3개'}
           {drawCount >= 3 && (
             <button onClick={finalizeDrawing} className="ml-2 bg-white text-[#0073ea] px-2 py-0.5 rounded-full font-semibold flex items-center gap-1 hover:bg-blue-50">
@@ -1431,7 +1448,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
                 <div key={z.id} className="flex items-center gap-1 px-1.5 py-1 text-xs">
                   <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: ZONE_COLORS[i % ZONE_COLORS.length] }} />
                   <span className="flex-1 truncate text-gray-700">{z.name}</span>
-                  <span className="text-gray-400 whitespace-nowrap">{z.w.toFixed(1)}×{z.h.toFixed(1)}</span>
+                  <span className="text-gray-400 whitespace-nowrap">{fmtMm(z.w)}×{fmtMm(z.h)}</span>
                   <span className="text-gray-500 font-medium whitespace-nowrap">{(z.w * z.h).toFixed(1)}m²</span>
                   <button onClick={(e) => {
                     e.stopPropagation();
@@ -1507,15 +1524,15 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
             <h3 className="font-semibold text-[#1a1a1a] mb-3">꼭짓점 #{moveInput.idx + 1} 좌표</h3>
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-500 mb-1 block">X (m)</label>
-                <input type="number" step="0.5" value={moveInput.x}
+                <label className="text-xs text-gray-500 mb-1 block">X (mm)</label>
+                <input type="number" step="10" value={moveInput.x}
                   onChange={e => setMoveInput(m => ({ ...m, x: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0073ea]/20 focus:border-[#0073ea]"
                   autoFocus />
               </div>
               <div>
-                <label className="text-xs text-gray-500 mb-1 block">Y (m)</label>
-                <input type="number" step="0.5" value={moveInput.y}
+                <label className="text-xs text-gray-500 mb-1 block">Y (mm)</label>
+                <input type="number" step="10" value={moveInput.y}
                   onChange={e => setMoveInput(m => ({ ...m, y: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0073ea]/20 focus:border-[#0073ea]"
                   onKeyDown={e => e.key === 'Enter' && applyMove()} />

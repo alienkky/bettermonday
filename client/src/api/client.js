@@ -148,6 +148,8 @@ export const marketPricesApi = {
   importFromItems: (data) => api.post('/market-prices/import-from-items', data),
   applyToItem: (id, data) => api.post(`/market-prices/${id}/apply-to-item`, data || {}),
   exportExcel: (params) => api.get('/market-prices/export', { params, responseType: 'blob' }),
+  previewPublic: (data) => api.post('/market-prices/preview-public', data || {}),
+  importFromPublic: (data) => api.post('/market-prices/import-from-public', data || {}),
 };
 
 // Brand Settings — JSON body with base64 data URLs in `logoUrl` / `faviconUrl`

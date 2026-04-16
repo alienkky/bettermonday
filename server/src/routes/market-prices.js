@@ -3,6 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const { authenticate, requireAdmin, requireMaster } = require('../middleware/auth');
 const XLSX = require('xlsx');
 const multer = require('multer');
+const { searchPublicPrices } = require('../services/publicPriceApi');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -700,6 +701,115 @@ router.get('/export', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '엑셀 내보내기 실패' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// 공공데이터포털 / 조달청 OpenAPI 연동 (POC)
+// ─────────────────────────────────────────────
+
+// POST /api/market-prices/preview-public — 외부 API 검색 결과만 조회 (저장 X)
+// Body: { keyword?, category?, numOfRows? }
+router.post('/preview-public', requireMaster, async (req, res) => {
+  try {
+    const { keyword, category, numOfRows } = req.body || {};
+    const result = await searchPublicPrices({ keyword, category, numOfRows });
+    res.json({
+      ...result,
+      message:
+        result.source === 'demo'
+          ? 'DEMO 모드 — 환경변수 G2B_API_KEY 를 설정하면 실제 조달청 데이터를 조회합니다.'
+          : `조달청 종합쇼핑몰 OpenAPI — ${result.items.length}건 수신`,
+    });
+  } catch (err) {
+    console.error('[preview-public] error:', err);
+    res.status(500).json({ error: '공공 API 조회 실패: ' + (err.message || 'unknown') });
+  }
+});
+
+// POST /api/market-prices/import-from-public — 외부 API 결과를 MarketPrice 에 저장
+// Body: { keyword?, category?, numOfRows?, brand?, selected?: string[] }
+//   selected: preview 결과의 name 배열 — 주어지면 그 항목만 저장, 없으면 전체
+router.post('/import-from-public', requireMaster, async (req, res) => {
+  try {
+    const { keyword, category, numOfRows, brand = '공통', selected } = req.body || {};
+    const result = await searchPublicPrices({ keyword, category, numOfRows });
+    const selectedSet = Array.isArray(selected) && selected.length ? new Set(selected) : null;
+
+    const date = fmtDate();
+    let created = 0;
+    let updated = 0;
+    const skipped = [];
+
+    for (const r of result.items) {
+      if (selectedSet && !selectedSet.has(r.name)) continue;
+      if (!r.name || r.minPrice == null || r.maxPrice == null) {
+        skipped.push({ name: r.name, reason: '필수 필드 누락' });
+        continue;
+      }
+      const avg = Math.round((r.minPrice + r.maxPrice) / 2);
+      const sourceLabel =
+        result.source === 'g2b'
+          ? `조달청 종합쇼핑몰 (${r.vendor || '-'}) ${r.sourceUrl || ''}`.trim()
+          : `공공데이터포털 DEMO ${r.sourceUrl || ''}`.trim();
+
+      // 같은 brand + name 의 기존 시세가 있으면 업데이트
+      const existing = await prisma.marketPrice.findFirst({
+        where: { brand, name: r.name, isActive: true },
+      });
+
+      if (existing) {
+        const pct = existing.avgPrice
+          ? +(((avg - existing.avgPrice) / existing.avgPrice) * 100).toFixed(1)
+          : 0;
+        await prisma.marketPrice.update({
+          where: { id: existing.id },
+          data: {
+            spec: r.spec || existing.spec,
+            category: r.category || existing.category,
+            unit: r.unit || existing.unit,
+            minPrice: r.minPrice,
+            maxPrice: r.maxPrice,
+            avgPrice: avg,
+            changePct: pct,
+            source: sourceLabel,
+            priceDate: date,
+          },
+        });
+        updated++;
+      } else {
+        await prisma.marketPrice.create({
+          data: {
+            brand,
+            name: r.name,
+            spec: r.spec || null,
+            category: r.category || '공통',
+            unit: r.unit || 'EA',
+            minPrice: r.minPrice,
+            maxPrice: r.maxPrice,
+            avgPrice: avg,
+            changePct: 0,
+            source: sourceLabel,
+            priceDate: date,
+            isActive: true,
+          },
+        });
+        created++;
+      }
+    }
+
+    res.json({
+      message: `공공 API 동기화 완료 — 신규 ${created}건, 업데이트 ${updated}건${
+        skipped.length ? `, ${skipped.length}건 건너뜀` : ''
+      } (소스: ${result.source === 'g2b' ? '조달청 나라장터' : 'DEMO'})`,
+      created,
+      updated,
+      skipped,
+      source: result.source,
+    });
+  } catch (err) {
+    console.error('[import-from-public] error:', err);
+    res.status(500).json({ error: '공공 API 동기화 실패: ' + (err.message || 'unknown') });
   }
 });
 

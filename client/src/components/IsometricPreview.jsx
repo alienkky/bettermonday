@@ -84,7 +84,12 @@ export default function IsometricPreview() {
             draw(canvasRef.current, space, placements, zones, tileCache.current, size.w, size.h, angle);
           }
         };
-        img.onerror = () => { loaded++; };
+        img.onerror = () => {
+          loaded++;
+          if (loaded === toLoad.length) {
+            draw(canvasRef.current, space, placements, zones, tileCache.current, size.w, size.h, angle);
+          }
+        };
         img.src = url.startsWith('http') ? url : `${window.location.origin}${url}`;
       });
     } else {
@@ -192,38 +197,86 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
-  const origPolygon = space.layoutJson?.polygon || [
-    { x: 0, y: 0 },
-    { x: space.widthM, y: 0 },
-    { x: space.widthM, y: space.depthM },
-    { x: 0, y: space.depthM },
-  ];
+  // layoutJson may be in legacy single-polygon shape (`polygon: [...]`) or the
+  // current multi-polygon shape (`polygons: [{id, name, vertices}, ...]`).
+  // Collect ALL polygons (additional spaces / L-shapes) so they're all rendered
+  // rather than only the first one.
+  const layout = space.layoutJson || {};
+  console.debug('[ISO] draw() — layoutJson:', JSON.stringify(layout).slice(0, 300),
+    'widthM:', space.widthM, 'depthM:', space.depthM, 'shape:', space.shape);
+  let origPolygons = [];
+  if (Array.isArray(layout.polygons) && layout.polygons.length > 0) {
+    origPolygons = layout.polygons
+      .map(p => Array.isArray(p?.vertices) ? p.vertices : null)
+      .filter(v => v && v.length >= 3);
+  }
+  if (origPolygons.length === 0 && Array.isArray(layout.polygon) && layout.polygon.length >= 3) {
+    origPolygons = [layout.polygon];
+  }
+  if (origPolygons.length === 0) {
+    console.debug('[ISO] ⚠️ No valid polygon found — falling back to widthM × depthM rect');
+    origPolygons = [[
+      { x: 0, y: 0 },
+      { x: space.widthM, y: 0 },
+      { x: space.widthM, y: space.depthM },
+      { x: 0, y: space.depthM },
+    ]];
+  } else {
+    console.debug('[ISO] ✓ Using', origPolygons.length, 'polygon(s),',
+      'verts:', origPolygons.map(p => p.length).join('+'));
+  }
   const hM = space.heightM || 2.8;
 
-  // Compute rotation center from original polygon
-  const origMaxX = Math.max(...origPolygon.map(p => p.x));
-  const origMaxY = Math.max(...origPolygon.map(p => p.y));
+  // Compute rotation center from union of all polygons
+  const allOrigPts = origPolygons.flat();
+  const origMaxX = Math.max(...allOrigPts.map(p => p.x));
+  const origMaxY = Math.max(...allOrigPts.map(p => p.y));
   const rcx = origMaxX / 2, rcy = origMaxY / 2;
 
-  // Rotate polygon
-  const polygon = origPolygon.map(p => rotatePoint(p.x, p.y, rcx, rcy, angle));
+  // Rotate all polygons
+  const rotatedPolygons = origPolygons.map(poly =>
+    poly.map(p => rotatePoint(p.x, p.y, rcx, rcy, angle))
+  );
 
-  // Recalculate bounds after rotation
-  const minPX = Math.min(...polygon.map(p => p.x));
-  const minPY = Math.min(...polygon.map(p => p.y));
-  const maxPX = Math.max(...polygon.map(p => p.x));
-  const maxPY = Math.max(...polygon.map(p => p.y));
+  // Recalculate bounds after rotation (across all polygons)
+  const allRotPts = rotatedPolygons.flat();
+  const minPX = Math.min(...allRotPts.map(p => p.x));
+  const minPY = Math.min(...allRotPts.map(p => p.y));
+  const maxPX = Math.max(...allRotPts.map(p => p.x));
+  const maxPY = Math.max(...allRotPts.map(p => p.y));
 
-  // Shift polygon so min is at 0
+  // Shift polygons so min is at 0
   const shiftX = -minPX, shiftY = -minPY;
-  const shifted = polygon.map(p => ({ x: p.x + shiftX, y: p.y + shiftY }));
+  const shiftedPolygons = rotatedPolygons.map(poly =>
+    poly.map(p => ({ x: p.x + shiftX, y: p.y + shiftY }))
+  );
+  // First polygon stays as "main" for legacy tile/grid logic
+  const shifted = shiftedPolygons[0];
 
   const maxX = maxPX - minPX;
   const maxY = maxPY - minPY;
-  const maxDim = Math.max(maxX, maxY, hM);
-  const scale = Math.min(W * 0.32, H * 0.36) / maxDim;
-  const cx = W / 2 + 4;
-  const cy = H * 0.58;
+
+  // Compute iso-projected bounding box of all polygon vertices (floor + ceiling)
+  // so that scale and center can be chosen to fit & center the drawn shape
+  // (including wall height) in the canvas.
+  const allShiftedPts = shiftedPolygons.flat();
+  const isoPts = [];
+  allShiftedPts.forEach(p => {
+    isoPts.push(toIso(p.x, p.y, 0));        // floor
+    isoPts.push(toIso(p.x, p.y, hM));       // ceiling
+  });
+  const isoMinX = Math.min(...isoPts.map(p => p.sx));
+  const isoMaxX = Math.max(...isoPts.map(p => p.sx));
+  const isoMinY = Math.min(...isoPts.map(p => p.sy));
+  const isoMaxY = Math.max(...isoPts.map(p => p.sy));
+  const isoW = isoMaxX - isoMinX || 1;
+  const isoH = isoMaxY - isoMinY || 1;
+
+  const PAD = 16;
+  const scale = Math.min((W - PAD * 2) / isoW, (H - PAD * 2) / isoH);
+  // Center the iso bbox of the drawn shape in the canvas
+  const cx = W / 2 - ((isoMinX + isoMaxX) / 2) * scale;
+  const cy = H / 2 - ((isoMinY + isoMaxY) / 2) * scale;
 
   // Project function using shifted (rotated) coordinates
   const proj = (x, y, z = 0) => {
@@ -237,30 +290,41 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
     return { x: r.x + shiftX, y: r.y + shiftY };
   };
 
+  // Helper: build a path that covers all polygons' floors (union via non-zero fill)
+  const tracePolyFloor = (poly, dz = 0, dx = 0, dy = 0) => {
+    poly.forEach((p, i) => {
+      const pt = proj(p.x + dx, p.y + dy, dz);
+      i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.closePath();
+  };
+  const traceAllFloors = (dz = 0, dx = 0, dy = 0) => {
+    ctx.beginPath();
+    shiftedPolygons.forEach(poly => tracePolyFloor(poly, dz, dx, dy));
+  };
+
   /* ── shadow ──────────────────────────────────────── */
   ctx.save();
-  ctx.beginPath();
-  shifted.forEach((p, i) => {
-    const pt = proj(p.x + 0.3, p.y + 0.3, -0.15);
-    i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
-  });
-  ctx.closePath();
+  traceAllFloors(-0.15, 0.3, 0.3);
   ctx.fillStyle = 'rgba(0,0,0,0.06)';
   ctx.fill();
   ctx.restore();
 
   /* ── floor ───────────────────────────────────────── */
-  ctx.beginPath();
-  shifted.forEach((p, i) => {
-    const pt = proj(p.x, p.y, 0);
-    i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
-  });
-  ctx.closePath();
+  traceAllFloors(0);
   ctx.fillStyle = FLOOR_COLOR;
   ctx.fill();
-  ctx.strokeStyle = '#c8bfb3';
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 1.2;
+  shiftedPolygons.forEach(poly => {
+    ctx.beginPath();
+    poly.forEach((p, i) => {
+      const pt = proj(p.x, p.y, 0);
+      i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.closePath();
+    ctx.stroke();
+  });
 
   /* ── per-zone floor tile textures ───────────────── */
   if (zones && tileCache) {
@@ -279,13 +343,8 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
 
       ctx.save();
 
-      // Clip to floor polygon
-      ctx.beginPath();
-      shifted.forEach((p, i) => {
-        const pt = proj(p.x, p.y, 0);
-        i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
-      });
-      ctx.closePath();
+      // Clip to union of all floor polygons
+      traceAllFloors(0);
       ctx.clip();
 
       // If zone-specific, clip to rotated zone quad
@@ -333,12 +392,7 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
 
   // Floor grid
   ctx.save();
-  ctx.beginPath();
-  shifted.forEach((p, i) => {
-    const pt = proj(p.x, p.y, 0);
-    i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
-  });
-  ctx.closePath();
+  traceAllFloors(0);
   ctx.clip();
 
   const hasTiles = placements.some(p => p.item?.tileSize && p.item?.imageUrl);
@@ -367,13 +421,8 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
       ];
 
       ctx.save();
-      // Clip to floor
-      ctx.beginPath();
-      shifted.forEach((p, i) => {
-        const pt = proj(p.x, p.y, 0);
-        i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
-      });
-      ctx.closePath();
+      // Clip to union of all floors
+      traceAllFloors(0);
       ctx.clip();
 
       // Draw zone fill
@@ -403,14 +452,16 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
 
   /* ── walls ───────────────────────────────────────── */
   const walls = [];
-  for (let i = 0; i < shifted.length; i++) {
-    const a = shifted[i], b = shifted[(i + 1) % shifted.length];
-    const n = outwardNormal(shifted, i);
-    const facing = n.x + n.y;
-    // Depth sorting: walls further from viewer drawn first
-    const depth = (a.x + b.x + a.y + b.y) / 2;
-    walls.push({ a, b, facing, depth });
-  }
+  shiftedPolygons.forEach((poly) => {
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const n = outwardNormal(poly, i);
+      const facing = n.x + n.y;
+      // Depth sorting: walls further from viewer drawn first
+      const depth = (a.x + b.x + a.y + b.y) / 2;
+      walls.push({ a, b, facing, depth });
+    }
+  });
 
   walls.sort((a, b) => a.depth - b.depth);
 
@@ -429,8 +480,8 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
       ctx.fillStyle = 'rgba(210,200,185,0.18)';
       ctx.fill();
       ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = 'rgba(180,170,155,0.35)';
-      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = 'rgba(17,17,17,0.45)';
+      ctx.lineWidth = 0.6;
       ctx.stroke();
       ctx.setLineDash([]);
     } else {
@@ -444,30 +495,32 @@ function draw(cvs, space, placements, zones, tileCache, W, H, angle) {
       grad.addColorStop(1, `rgb(${r},${g},${bv})`);
       ctx.fillStyle = grad;
       ctx.fill();
-      ctx.strokeStyle = '#b8a99a';
-      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 1;
       ctx.stroke();
 
       ctx.beginPath();
       ctx.moveTo(bl.x, bl.y); ctx.lineTo(br.x, br.y);
-      ctx.strokeStyle = '#a09080';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 1.4;
       ctx.stroke();
     }
   });
 
   /* ── ceiling outline ─────────────────────────────── */
-  ctx.beginPath();
-  shifted.forEach((p, i) => {
-    const pt = proj(p.x, p.y, hM);
-    i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
+  shiftedPolygons.forEach(poly => {
+    ctx.beginPath();
+    poly.forEach((p, i) => {
+      const pt = proj(p.x, p.y, hM);
+      i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fill();
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
   });
-  ctx.closePath();
-  ctx.strokeStyle = CEIL_STROKE;
-  ctx.lineWidth = 1.2;
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fill();
 
   /* ── placements ──────────────────────────────────── */
   // Rotate & sort placements by depth (back to front)

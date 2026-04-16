@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, RefreshCw, Download, Database,
   Search, ArrowUpDown, ArrowUp, ArrowDown, X, Zap, BarChart3, List,
   Plus, Edit2, Trash2, GitCompare, Link2, Unlink, ChevronRight, AlertTriangle,
-  Inbox, CheckSquare, Square, FolderOpen,
+  Inbox, CheckSquare, Square, FolderOpen, Globe, Loader2,
 } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 
@@ -40,6 +40,7 @@ export default function MarketPricePage({ readOnly = false }) {
   const [applyingId, setApplyingId] = useState(null);
   const [dbCategories, setDbCategories] = useState([]);
   const [catManagerOpen, setCatManagerOpen] = useState(false);
+  const [publicModalOpen, setPublicModalOpen] = useState(false);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -248,6 +249,12 @@ export default function MarketPricePage({ readOnly = false }) {
                   <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> 시세 갱신
                 </button>
                 {isMaster && (
+                  <button onClick={() => setPublicModalOpen(true)}
+                    className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                    <Globe size={14} /> 공공 API 가져오기
+                  </button>
+                )}
+                {isMaster && (
                   <button onClick={handleForceSyncAll} disabled={forceSyncing}
                     className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50">
                     <AlertTriangle size={14} /> {forceSyncing ? '반영 중...' : '강제 일괄 반영'}
@@ -454,6 +461,14 @@ export default function MarketPricePage({ readOnly = false }) {
         <CategoryManagerModal
           onClose={() => setCatManagerOpen(false)}
           onChanged={() => { loadCategories(); loadData(); }}
+        />
+      )}
+
+      {publicModalOpen && (
+        <PublicImportModal
+          categories={dbCategories}
+          onClose={() => setPublicModalOpen(false)}
+          onImported={() => { setPublicModalOpen(false); loadData(); }}
         />
       )}
     </Layout>
@@ -922,6 +937,218 @@ function PendingItemsTab({ items, loading, selected, onToggleAll, onToggleOne, o
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Public API Import Modal ──
+// 공공데이터포털 / 조달청 나라장터 OpenAPI 결과를 미리 본 뒤 시세로 저장.
+// - 환경변수 G2B_API_KEY 미설정 시 서버에서 DEMO 데이터 반환 (배너로 표시)
+// - 키워드/카테고리 + 브랜드를 지정 → 미리보기 → 선택 저장
+function PublicImportModal({ categories, onClose, onImported }) {
+  const [keyword, setKeyword] = useState('');
+  const [category, setCategory] = useState('');
+  const [brand, setBrand] = useState('공통');
+  const [numOfRows, setNumOfRows] = useState(20);
+  const [loading, setLoading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [importing, setImporting] = useState(false);
+
+  const runPreview = async () => {
+    setLoading(true);
+    setPreview(null);
+    setSelected(new Set());
+    try {
+      const res = await marketPricesApi.previewPublic({
+        keyword: keyword.trim() || undefined,
+        category: category || undefined,
+        numOfRows: Number(numOfRows) || 20,
+      });
+      setPreview(res.data);
+      setSelected(new Set((res.data.items || []).map(i => i.name)));
+    } catch (err) {
+      toast.error(err.response?.data?.error || '미리보기 실패');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = (name) => {
+    const next = new Set(selected);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    setSelected(next);
+  };
+  const toggleAll = () => {
+    if (!preview?.items) return;
+    if (selected.size === preview.items.length) setSelected(new Set());
+    else setSelected(new Set(preview.items.map(i => i.name)));
+  };
+
+  const runImport = async () => {
+    if (!preview || preview.items.length === 0) return;
+    if (selected.size === 0) return toast.error('가져올 항목을 선택하세요.');
+    if (!window.confirm(`${selected.size}건을 ${brand} 브랜드의 시세로 저장하시겠습니까?`)) return;
+    setImporting(true);
+    try {
+      const res = await marketPricesApi.importFromPublic({
+        keyword: keyword.trim() || undefined,
+        category: category || undefined,
+        numOfRows: Number(numOfRows) || 20,
+        brand,
+        selected: Array.from(selected),
+      });
+      toast.success(res.data.message || '저장 완료');
+      onImported?.();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '저장 실패');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const isDemo = preview?.source === 'demo';
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Globe size={18} className="text-emerald-600" />
+            <h3 className="font-semibold text-gray-900">공공 API 시세 가져오기</h3>
+            <span className="text-xs text-gray-400">조달청 나라장터 · 공공데이터포털</span>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+
+        <div className="px-6 py-4 border-b border-gray-100 grid grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">키워드</label>
+            <input value={keyword} onChange={(e) => setKeyword(e.target.value)}
+              placeholder="예: LED, 타일, 합판"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#0073ea]/20 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">카테고리</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+              <option value="">전체</option>
+              {categories.map(c => (
+                <option key={c.id} value={c.name}>{c.displayName || c.label || c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">저장 브랜드</label>
+            <select value={brand} onChange={(e) => setBrand(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+              <option value="공통">공통</option>
+              <option value="먼데이커피">먼데이커피</option>
+              <option value="스토리오브라망">스토리오브라망</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">건수</label>
+            <div className="flex gap-2">
+              <input type="number" min={5} max={100} value={numOfRows}
+                onChange={(e) => setNumOfRows(e.target.value)}
+                className="w-20 border border-gray-200 rounded-lg px-2 py-2 text-sm" />
+              <button onClick={runPreview} disabled={loading}
+                className="flex-1 flex items-center justify-center gap-1.5 bg-[#0073ea] text-white rounded-lg text-sm font-medium hover:bg-[#0060c0] disabled:opacity-50">
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                {loading ? '조회 중' : '미리보기'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-6 py-3 border-b border-gray-100 flex items-center justify-between gap-4">
+          <div className="text-xs">
+            {!preview && <span className="text-gray-400">키워드/카테고리를 지정하고 미리보기를 실행하세요.</span>}
+            {preview && (
+              <div className="flex items-center gap-2">
+                {isDemo ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                    <AlertTriangle size={11} /> DEMO 모드
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
+                    <Globe size={11} /> 조달청 LIVE
+                  </span>
+                )}
+                <span className="text-gray-600">{preview.message}</span>
+              </div>
+            )}
+          </div>
+          {preview?.items?.length > 0 && (
+            <div className="text-xs text-gray-400">전체 {preview.items.length}건 · 선택 {selected.size}건</div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {!preview ? (
+            <div className="text-center py-16 text-gray-300 text-sm">미리보기 결과가 여기에 표시됩니다.</div>
+          ) : preview.items.length === 0 ? (
+            <div className="text-center py-16 text-gray-400 text-sm">검색 결과가 없습니다. 키워드를 바꿔보세요.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider sticky top-0">
+                  <th className="px-3 py-2 text-left w-10">
+                    <button onClick={toggleAll} className="text-gray-400 hover:text-[#0073ea]">
+                      {preview.items.length > 0 && selected.size === preview.items.length
+                        ? <CheckSquare size={14} className="text-[#0073ea]" />
+                        : <Square size={14} />}
+                    </button>
+                  </th>
+                  <th className="px-3 py-2 text-left">품명</th>
+                  <th className="px-3 py-2 text-left">규격</th>
+                  <th className="px-3 py-2 text-left">카테고리</th>
+                  <th className="px-3 py-2 text-right">최저가</th>
+                  <th className="px-3 py-2 text-right">최대가</th>
+                  <th className="px-3 py-2 text-center">단위</th>
+                  <th className="px-3 py-2 text-left">공급업체</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {preview.items.map(item => {
+                  const checked = selected.has(item.name);
+                  return (
+                    <tr key={item.name} onClick={() => toggle(item.name)}
+                      className={`cursor-pointer transition-colors ${checked ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
+                      <td className="px-3 py-2">
+                        {checked ? <CheckSquare size={14} className="text-[#0073ea]" /> : <Square size={14} className="text-gray-300" />}
+                      </td>
+                      <td className="px-3 py-2 font-medium text-gray-900">{item.name}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500 max-w-[200px] truncate" title={item.spec}>{item.spec}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{item.category}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{Number(item.minPrice).toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{Number(item.maxPrice).toLocaleString()}</td>
+                      <td className="px-3 py-2 text-center text-gray-500">{item.unit}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500 max-w-[140px] truncate" title={item.vendor}>{item.vendor || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
+          <div className="text-xs text-gray-400">
+            {isDemo && '실제 데이터 연동: 서버에 G2B_API_KEY 환경변수를 설정하세요 (data.go.kr → 조달청 종합쇼핑몰 서비스 활용신청).'}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">취소</button>
+            <button onClick={runImport}
+              disabled={importing || !preview?.items?.length || selected.size === 0}
+              className="flex items-center gap-1.5 px-5 py-2 text-sm bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50">
+              {importing ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+              {importing ? '저장 중...' : `${selected.size}건 저장`}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
