@@ -246,10 +246,14 @@ const renderActivePoly = (canvas, polygon) => {
 };
 
 /* ── render additional polygons ─────────────────────── */
-const renderAdditionalPolys = (canvas, polygons) => {
+// skipIdx: index to omit (used while that polygon is being edited — its shape
+// is rendered separately via renderEditPoly so drawing it here leaves a stale
+// copy of the pre-edit vertices underneath the drag handles).
+const renderAdditionalPolys = (canvas, polygons, skipIdx = -1) => {
   clearTag(canvas, '_addPoly');
   polygons.forEach((poly, idx) => {
     if (idx === 0) return; // main polygon rendered by renderPoly
+    if (idx === skipIdx) return;
     const verts = poly.vertices;
     if (!verts || verts.length < 3) return;
     const pts = verts.map(p => ({ x: p.x * SCALE + OFFSET, y: p.y * SCALE + OFFSET }));
@@ -776,8 +780,10 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
       // Edit main polygon — uses _poly tag
       renderPoly(canvas, editPolyRef.current);
     } else {
-      // Edit additional polygon — keep main (_poly) intact, use _editPoly
-      clearTag(canvas, '_addPoly');
+      // Edit additional polygon — keep main (_poly) intact, render other
+      // additional polygons normally, but skip the one being edited so the
+      // _editPoly layer is the only copy of that shape on screen.
+      renderAdditionalPolys(canvas, savedPolygons, polyIdx);
       renderEditPoly(canvas, editPolyRef.current);
     }
     renderHandles(canvas, editPolyRef.current); canvas.renderAll();
@@ -791,16 +797,25 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
     const editIdx = typeof drawTarget === 'number' ? drawTarget : 0;
     if (save) {
       const poly = editPolyRef.current;
-      if (editIdx === 0) renderPoly(canvas, poly);
-      // Re-render additional polygons (they were cleared during edit)
-      if (editIdx > 0 && savedPolygons.length > 1) renderAdditionalPolys(canvas, savedPolygons);
+      if (editIdx === 0) {
+        renderPoly(canvas, poly);
+        if (savedPolygons.length > 1) renderAdditionalPolys(canvas, savedPolygons);
+      } else {
+        // Use the just-edited vertices right now — savedPolygons is stale
+        // until setSpace lands from handleDrawComplete, so drawing directly
+        // from it would briefly show the pre-edit shape or a gap.
+        const merged = savedPolygons.map((p, i) =>
+          i === editIdx ? { ...p, vertices: poly } : p
+        );
+        renderAdditionalPolys(canvas, merged);
+      }
       setArea(totalPolyArea - areaM2(savedPolygons[editIdx]?.vertices || []) + areaM2(poly));
       canvas.renderAll();
       onDrawComplete?.(poly, editIdx);
     } else {
       if (editIdx === 0) renderPoly(canvas, savedPoly);
       // Restore additional polygons on cancel
-      if (editIdx > 0 && savedPolygons.length > 1) renderAdditionalPolys(canvas, savedPolygons);
+      if (savedPolygons.length > 1) renderAdditionalPolys(canvas, savedPolygons);
       setArea(totalPolyArea);
       editPolyRef.current = savedPolygons[editIdx]?.vertices ?? savedPoly;
       canvas.renderAll();
@@ -1005,8 +1020,13 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
 
     canvas.getObjects().filter(o => o.placementId).forEach(o => canvas.remove(o));
 
-    // Render additional polygons
-    if (savedPolygons.length > 1) renderAdditionalPolys(canvas, savedPolygons);
+    // Render additional polygons — skip the one currently being edited so we
+    // don't paint the pre-edit vertices on top of the live _editPoly layer.
+    if (savedPolygons.length > 1) {
+      const skipIdx = mode === 'editing' && typeof drawTarget === 'number' && drawTarget > 0
+        ? drawTarget : -1;
+      renderAdditionalPolys(canvas, savedPolygons, skipIdx);
+    }
 
     // Facade mode: only render polygons, skip zones/placements
     if (facadeMode) { canvas.renderAll(); return; }
@@ -1047,7 +1067,7 @@ export default function Canvas2D({ onSelect, onDrawComplete, facadeMode = false 
       canvas.add(group);
     });
     canvas.renderAll();
-  }, [placements, space, unlockedIds, savedPoly, zones, mode]); // eslint-disable-line
+  }, [placements, space, unlockedIds, savedPoly, zones, mode, drawTarget]); // eslint-disable-line
 
   /* ── zoom controls ────────────────────────────────── */
   const handleZoom = useCallback((dir) => {
